@@ -6,7 +6,7 @@ import tempfile
 
 from conftest import EXAMPLES, _dedup_channels
 
-from motec_log_generator.log import DataLog
+from track_telemetry_converter.log import DataLog
 
 
 def test_ibt_smoke():

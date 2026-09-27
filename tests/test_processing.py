@@ -3,10 +3,10 @@
 import numpy as np
 from conftest import _read_lines
 
-from motec_log_generator.derived import derive_gear_from_rpm_speed
-from motec_log_generator.interpolation import _interp_zoh
-from motec_log_generator.log import DataLog
-from motec_log_generator.models import Message
+from track_telemetry_converter.derived import derive_gear_from_rpm_speed
+from track_telemetry_converter.interpolation import _interp_zoh
+from track_telemetry_converter.log import DataLog
+from track_telemetry_converter.models import Message
 
 
 def test_g_source_modes():

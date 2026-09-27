@@ -4,7 +4,7 @@ import os
 
 from conftest import EXAMPLES, _dedup_channels, _import_or_skip, _read_lines
 
-from motec_log_generator.log import DataLog
+from track_telemetry_converter.log import DataLog
 
 
 def test_can_smoke():

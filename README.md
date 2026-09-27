@@ -1,7 +1,6 @@
 # TrackTelemetryConverter
 
-> Formerly named `MotecLogGenerator`. The `motec-log` CLI command and the
-> `motec_log_generator` Python package/import name are unchanged.
+> Formerly named `MotecLogGenerator` (repository/project name).
 
 A single Python CLI for converting motorsports telemetry into verified MoTeC
 `.ld` and `.ldx` files.
@@ -31,7 +30,7 @@ input formats remain available on Python 3.8/3.9.
 
 ```bash
 python -m pip install .
-motec-log --help
+track-telemetry --help
 ```
 
 Install only the optional parsers you need:
@@ -54,18 +53,18 @@ python -m pytest -q
 The installed command is the primary interface:
 
 ```bash
-motec-log session.ibt AUTO
-motec-log session.rcz RCZ
-motec-log session.xrk XRK
-motec-log session.fit FIT
-motec-log vbox.vbo VBO
-motec-log can.log CAN --dbc vehicle.dbc
+track-telemetry session.ibt AUTO
+track-telemetry session.rcz RCZ
+track-telemetry session.xrk XRK
+track-telemetry session.fit FIT
+track-telemetry vbox.vbo VBO
+track-telemetry can.log CAN --dbc vehicle.dbc
 ```
 
 The package module is an equivalent fallback:
 
 ```bash
-python -m motec_log_generator session.rcz AUTO
+python -m track_telemetry_converter session.rcz AUTO
 ```
 
 `AUTO` detects IBT, RCZ, XRK/XRZ, FIT, VBO, PB Buddy, AIM/RaceChrono CSV,
@@ -75,20 +74,20 @@ Accessport CSV, and generic CSV inputs. Explicit choices are `CAN`, `CSV`,
 Common options:
 
 ```bash
-motec-log session.rcz AUTO --output converted.ld
-motec-log session.rcz AUTO --output converted.ld --force
-motec-log session.rcz AUTO --csv
-motec-log session.fit AUTO --csv --csv-wallclock
-motec-log session.rcz AUTO --g-source sensor --frequency 25
+track-telemetry session.rcz AUTO --output converted.ld
+track-telemetry session.rcz AUTO --output converted.ld --force
+track-telemetry session.rcz AUTO --csv
+track-telemetry session.fit AUTO --csv --csv-wallclock
+track-telemetry session.rcz AUTO --g-source sensor --frequency 25
 ```
 
 RaceChrono multi-session backups require an explicit selection:
 
 ```bash
-motec-log backup.rcz RCZ --list-sessions
-motec-log backup.rcz RCZ --session session_20260101_1000
-motec-log backup.rcz RCZ --session all
-motec-log backup.rcz RCZ --session all --output-dir converted_sessions
+track-telemetry backup.rcz RCZ --list-sessions
+track-telemetry backup.rcz RCZ --session session_20260101_1000
+track-telemetry backup.rcz RCZ --session all
+track-telemetry backup.rcz RCZ --session all --output-dir converted_sessions
 ```
 
 A selected session uses `<backup>_<session-id>.ld/.ldx` by default. Sessions
@@ -96,7 +95,7 @@ with multiple stints add `_stintN`. `--session all` writes one verified pair per
 stint under `<backup>_sessions/` unless `--output-dir` is provided; it cannot be
 combined with `--output` or a specific `--stint`.
 
-Run `motec-log --help` for the authoritative option list.
+Run `track-telemetry --help` for the authoritative option list.
 
 ## Behavior
 
@@ -125,14 +124,14 @@ Run `motec-log --help` for the authoritative option list.
 ## Project layout
 
 ```text
-src/motec_log_generator/   application package and CLI
+src/track_telemetry_converter/   application package and CLI
 tests/                     regression tests and telemetry fixtures
 pyproject.toml             package, dependency, and CLI configuration
 ```
 
 The repository intentionally has no second application, compatibility script,
 or standalone analysis-tool layer. Parsing, conversion, and export behavior is
-owned by the `motec-log` application.
+owned by the `track-telemetry` application.
 
 ## License
 
@@ -141,7 +140,7 @@ This project is licensed under GPL-3.0-only; see [LICENSE](LICENSE).
 The application vendors the GPL-3.0
 [`gotzl/ldparser`](https://github.com/gotzl/ldparser) implementation used for
 MoTeC LD binary parsing/writing. Its license is retained alongside the vendored
-source at `src/motec_log_generator/_vendor/LDParser.LICENSE`.
+source at `src/track_telemetry_converter/_vendor/LDParser.LICENSE`.
 
 MoTeC and i2 are trademarks of their respective owner. This project is an
 independent telemetry conversion utility and does not replace licensed MoTeC

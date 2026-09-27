@@ -13,11 +13,11 @@ from conftest import (
     _sha256,
 )
 
-from motec_log_generator._vendor.ldparser import ldData
-from motec_log_generator.cli import _csv_output_path
-from motec_log_generator.log import DataLog
-from motec_log_generator.motec import MotecLog
-from motec_log_generator.output import atomic_write_motec_pair, ensure_output_targets
+from track_telemetry_converter._vendor.ldparser import ldData
+from track_telemetry_converter.cli import _csv_output_path
+from track_telemetry_converter.log import DataLog
+from track_telemetry_converter.motec import MotecLog
+from track_telemetry_converter.output import atomic_write_motec_pair, ensure_output_targets
 
 
 def test_cli_ld_ldx_roundtrip_and_overwrite_guard():
@@ -99,7 +99,7 @@ def test_atomic_output_verification_failure_preserves_existing_files():
         with open(ldx_path, "wb") as output:
             output.write(b"old ldx")
 
-        with patch("motec_log_generator.output.verify_motec_pair", side_effect=RuntimeError("bad staged file")):
+        with patch("track_telemetry_converter.output.verify_motec_pair", side_effect=RuntimeError("bad staged file")):
             try:
                 atomic_write_motec_pair(motec, log, ld_path, ldx_path)
             except RuntimeError as exc:
@@ -123,7 +123,7 @@ def test_atomic_output_verification_failure_preserves_existing_files():
                 raise PermissionError("second target locked")
             return real_replace(source, target)
 
-        with patch("motec_log_generator.output.os.replace", side_effect=fail_second_replace):
+        with patch("track_telemetry_converter.output.os.replace", side_effect=fail_second_replace):
             try:
                 atomic_write_motec_pair(motec, log, ld_path, ldx_path)
             except PermissionError as exc:
@@ -150,7 +150,7 @@ def test_atomic_write_failure_cleans_up_partial_staged_files():
         ld_path = os.path.join(tmp_dir, "fresh_output.ld")
         ldx_path = os.path.join(tmp_dir, "fresh_output.ldx")
 
-        with patch("motec_log_generator.output.verify_motec_pair", side_effect=RuntimeError("corruption")):
+        with patch("track_telemetry_converter.output.verify_motec_pair", side_effect=RuntimeError("corruption")):
             try:
                 atomic_write_motec_pair(motec, log, ld_path, ldx_path)
             except RuntimeError as exc:

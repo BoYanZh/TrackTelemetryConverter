@@ -7,10 +7,10 @@ import xml.etree.ElementTree as ET
 
 from conftest import _read_lines
 
-from motec_log_generator.exporters.csv_export import write_csv
-from motec_log_generator.exporters.xml_utils import indent_xml
-from motec_log_generator.log import DataLog
-from motec_log_generator.models import Message
+from track_telemetry_converter.exporters.csv_export import write_csv
+from track_telemetry_converter.exporters.xml_utils import indent_xml
+from track_telemetry_converter.log import DataLog
+from track_telemetry_converter.models import Message
 
 
 def test_csv_export():

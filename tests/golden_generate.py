@@ -6,7 +6,7 @@ AFTER refactoring to confirm behavior is unchanged.
 import json
 import os
 
-from motec_log_generator.log import DataLog
+from track_telemetry_converter.log import DataLog
 
 EXAMPLES = os.path.join(os.path.dirname(__file__), "fixtures")
 OUT_DIR = os.path.join(os.path.dirname(__file__), "golden")

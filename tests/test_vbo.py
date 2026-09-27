@@ -2,7 +2,7 @@
 
 from conftest import _dedup_channels, _read_lines
 
-from motec_log_generator.log import DataLog
+from track_telemetry_converter.log import DataLog
 
 
 def test_vbo_smoke():

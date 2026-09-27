@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 from conftest import EXAMPLES, _dedup_channels, _import_or_skip
 
-from motec_log_generator.log import DataLog
+from track_telemetry_converter.log import DataLog
 
 
 def test_fit_smoke():

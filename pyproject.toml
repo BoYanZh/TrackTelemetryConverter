@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "motec-log-generator"
+name = "track-telemetry-converter"
 dynamic = ["version"]
 description = "Convert motorsports telemetry logs to MoTeC LD/LDX files."
 readme = "README.md"
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [project.scripts]
-motec-log = "motec_log_generator.cli:main"
+track-telemetry = "track_telemetry_converter.cli:main"
 
 [project.urls]
 Repository = "https://github.com/BoYanZh/TrackTelemetryConverter"
@@ -42,10 +42,10 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = { attr = "motec_log_generator.__version__" }
+version = { attr = "track_telemetry_converter.__version__" }
 
 [tool.setuptools.package-data]
-"motec_log_generator._vendor" = ["LDParser.LICENSE"]
+"track_telemetry_converter._vendor" = ["LDParser.LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -54,7 +54,7 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py38"
 exclude = [
-  "src/motec_log_generator/_vendor",
+  "src/track_telemetry_converter/_vendor",
   "build",
   "dist",
 ]

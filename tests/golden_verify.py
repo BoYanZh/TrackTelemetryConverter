@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from motec_log_generator.log import DataLog
+from track_telemetry_converter.log import DataLog
 
 EXAMPLES = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixtures"))
 GOLDEN = os.path.abspath(os.path.join(os.path.dirname(__file__), "golden", "golden.json"))

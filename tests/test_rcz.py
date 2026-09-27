@@ -16,10 +16,10 @@ from conftest import (
     _write_minimal_rcz,
 )
 
-from motec_log_generator._vendor.ldparser import ldData
-from motec_log_generator.log import DataLog
-from motec_log_generator.motec import MotecLog
-from motec_log_generator.output import atomic_write_motec_pair
+from track_telemetry_converter._vendor.ldparser import ldData
+from track_telemetry_converter.log import DataLog
+from track_telemetry_converter.motec import MotecLog
+from track_telemetry_converter.output import atomic_write_motec_pair
 
 
 def test_cli_rcz_end_to_end():

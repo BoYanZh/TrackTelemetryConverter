@@ -44,7 +44,7 @@ def _run_cli_in_process(args):
     """Run CLI main() in-process, capturing stdout/stderr and exit code."""
     from io import StringIO
 
-    from motec_log_generator.cli import main
+    from track_telemetry_converter.cli import main
 
     old_stdout, old_stderr = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = StringIO(), StringIO()
@@ -63,7 +63,7 @@ def _run_cli_in_process(args):
 
 
 def _assert_cli_roundtrip(source, log_type, expected_channels=(), in_process=True):
-    from motec_log_generator._vendor.ldparser import ldData
+    from track_telemetry_converter._vendor.ldparser import ldData
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         output = os.path.join(tmp_dir, f"{log_type.lower()}_roundtrip.ld")
@@ -80,7 +80,7 @@ def _assert_cli_roundtrip(source, log_type, expected_channels=(), in_process=Tru
                 [
                     sys.executable,
                     "-m",
-                    "motec_log_generator",
+                    "track_telemetry_converter",
                 ] + cli_args,
                 capture_output=True,
                 text=True,
