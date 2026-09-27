@@ -1,4 +1,4 @@
-"""GPS track exports (GPX / KML) for MotecLogGenerator."""
+"""GPS track exports (GPX / KML) for TrackTelemetryConverter."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def write_gpx(motec_log, gpx_filename, data_log):
 
     root = ET.Element("gpx", {
         "version": "1.1",
-        "creator": "MotecLogGenerator",
+        "creator": "TrackTelemetryConverter",
         "xmlns": "http://www.topografix.com/GPX/1/1"
     })
     trk = ET.SubElement(root, "trk")

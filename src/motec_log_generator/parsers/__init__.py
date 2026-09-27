@@ -1,4 +1,4 @@
-"""Input format parsers and registry for MotecLogGenerator."""
+"""Input format parsers and registry for TrackTelemetryConverter."""
 from __future__ import annotations
 
 from typing import NamedTuple

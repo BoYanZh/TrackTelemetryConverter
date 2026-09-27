@@ -1,4 +1,7 @@
-# MotecLogGenerator
+# TrackTelemetryConverter
+
+> Formerly named `MotecLogGenerator`. The `motec-log` CLI command and the
+> `motec_log_generator` Python package/import name are unchanged.
 
 A single Python CLI for converting motorsports telemetry into verified MoTeC
 `.ld` and `.ldx` files.

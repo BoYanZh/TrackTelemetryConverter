@@ -1,5 +1,5 @@
 """
-Centralized Constants & Channel Name Mapping Definitions for MotecLogGenerator.
+Centralized Constants & Channel Name Mapping Definitions for TrackTelemetryConverter.
 
 Provides a Single Source of Truth for:
   - Canonical MoTeC channel names and standard units.

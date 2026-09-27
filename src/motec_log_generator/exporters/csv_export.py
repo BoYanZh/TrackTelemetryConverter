@@ -1,4 +1,4 @@
-"""CSV telemetry export for MotecLogGenerator.
+"""CSV telemetry export for TrackTelemetryConverter.
 
 Writes all resampled channels as a tabular CSV with a header row of
 canonical MoTeC channel names.  Designed to be imported into AIM

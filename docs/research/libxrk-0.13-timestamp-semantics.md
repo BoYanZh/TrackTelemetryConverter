@@ -4,7 +4,7 @@ Date: 2026-08-25
 
 ## Conclusion
 
-MotecLogGenerator should require `libxrk>=0.13`. The timestamp difference is
+TrackTelemetryConverter should require `libxrk>=0.13`. The timestamp difference is
 an intentional GPS timecode bug fix, not an independent rebase of every
 channel. Later releases remain eligible and are guarded by the XRK regression
 tests and Python-version CI matrix.
@@ -22,7 +22,7 @@ The maintainer verified the fix against AIM's DLL with 6,062 samples and
 0.000 ms per-sample deviation. Across 353 tested files, 29 were affected. Raw
 GPS tables may retain duplicate timestamps and one backwards step to match
 AIM, while `get_channels_as_table()` remains monotonic and unique. Version
-0.13.0 also adds a name-addressable `lap_type` column; MotecLogGenerator does
+0.13.0 also adds a name-addressable `lap_type` column; TrackTelemetryConverter does
 not depend on the exact positional schema.
 
 ## Repository reproduction
@@ -38,7 +38,7 @@ environments with each released dependency version.
 
 Non-GPS timing did not change. The old GPS endpoint exceeded the RPM/logger
 endpoint by about 4.6 seconds; the corrected endpoint differs by 0.109 seconds.
-MotecLogGenerator's `_dedupe_samples` then sorts and deduplicates the raw stream
+TrackTelemetryConverter's `_dedupe_samples` then sorts and deduplicates the raw stream
 for export.
 
 The previous regression assertion requiring GPS to start around 4.7 seconds

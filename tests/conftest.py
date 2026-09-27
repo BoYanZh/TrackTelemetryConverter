@@ -1,4 +1,4 @@
-"""Shared fixtures and test helpers for MotecLogGenerator test suite."""
+"""Shared fixtures and test helpers for TrackTelemetryConverter test suite."""
 
 import hashlib
 import importlib
