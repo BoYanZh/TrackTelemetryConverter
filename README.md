@@ -95,6 +95,20 @@ with multiple stints add `_stintN`. `--session all` writes one verified pair per
 stint under `<backup>_sessions/` unless `--output-dir` is provided; it cannot be
 combined with `--output` or a specific `--stint`.
 
+Batch-convert a whole directory with per-file format detection:
+
+```bash
+track-telemetry data/ AUTO --recursive --force
+```
+
+`AUTO` detects RCZ, IBT, XRK/XRZ, FIT, VBO, and CSV dialects for each file,
+so mixed inputs convert in one run. Outputs are written next to each input and
+existing outputs are skipped unless `--force` is given. Add `--recursive` to
+include subdirectories. RaceChrono backup archives are skipped with a notice
+unless `--session all` is passed, in which case each archive expands under its
+own `<backup>_sessions/` directory. `--output`, `--session ID`, `--stint`, and
+`--lap` cannot be combined with directory mode.
+
 Run `track-telemetry --help` for the authoritative option list.
 
 ## Behavior

@@ -12,6 +12,8 @@ def normalize_venue(name):
         if any(k in s_lower for k in ["5 mile", "5 miles", "5mi"]):
             if "double bypass" in s_lower or "db" in s_lower:
                 return "Thunderhill 5 Mile Double Bypass"
+            elif "west" in s_lower and "bypass" in s_lower:
+                return "Thunderhill 5 Mile West Bypass"
             elif "bypass" in s_lower:
                 return "Thunderhill 5 Mile Bypass"
             else:
@@ -20,6 +22,11 @@ def normalize_venue(name):
         if "west" in s_lower:
             if "bypass" in s_lower:
                 return "Thunderhill West Bypass"
+            # NOTE: check "ccw" before "cw" since "ccw" contains "cw".
+            if "ccw" in s_lower:
+                return "Thunderhill West CCW"
+            if "cw" in s_lower:
+                return "Thunderhill West CW"
             return "Thunderhill West"
 
         if "cyclone" in s_lower:
@@ -34,6 +41,14 @@ def normalize_venue(name):
             return "Buttonwillow 25CCW"
         elif "13cw" in s_lower or "13 cw" in s_lower:
             return "Buttonwillow 13CW"
+        elif "1accw" in s_lower or "1a ccw" in s_lower:
+            return "Buttonwillow 1A CCW"
+        elif "1acw" in s_lower or "1a cw" in s_lower:
+            return "Buttonwillow 1A CW"
+        elif "1ccw" in s_lower or "1 ccw" in s_lower:
+            return "Buttonwillow 1 CCW"
+        elif "1cw" in s_lower or "1 cw" in s_lower:
+            return "Buttonwillow 1 CW"
         elif "the circuit" in s_lower or "circuit" in s_lower:
             return "Buttonwillow The Circuit"
         return "Buttonwillow Raceway Park"

@@ -69,6 +69,24 @@ def normalize_venue_name(name):
 _normalize_venue = normalize_venue_name
 
 
+# File extensions accepted per log type in batch directory mode.
+_BATCH_TYPE_EXTENSIONS = {
+    "RCZ": (".rcz",),
+    "XRK": (".xrk", ".xrz"),
+    "FIT": (".fit",),
+    "VBO": (".vbo",),
+    "IBT": (".ibt",),
+    "CAN": (".log", ".can", ".trc", ".asc"),
+    "CSV": (".csv",),
+    "ACCESSPORT": (".csv",),
+    "RACECHRONO": (".csv",),
+    "PBBUDDY": (".csv",),
+}
+_BATCH_AUTO_EXTENSIONS = tuple(
+    ext for exts in _BATCH_TYPE_EXTENSIONS.values() for ext in exts
+)
+
+
 def parse_gear_ratio_thresholds(value):
     try:
         thresholds = tuple(float(part.strip()) for part in value.split(","))
@@ -334,9 +352,11 @@ _process_one = process_one_file
 
 def build_parser():
     parser = argparse.ArgumentParser(description=DESCRIPTION, epilog=EPILOG)
-    parser.add_argument("log", type=str, help="Path to logfile")
-    parser.add_argument("log_type", type=str, help="Type of log to process",
+    parser.add_argument("log", type=str, help="Path to logfile, or to a directory for batch conversion")
+    parser.add_argument("log_type", type=str, help="Type of log to process (use AUTO with a directory to detect each file's format)",
                         choices=["CAN", "CSV", "ACCESSPORT", "RACECHRONO", "RCZ", "PBBUDDY", "VBO", "IBT", "XRK", "FIT", "AUTO"])
+    parser.add_argument("--recursive", action="store_true",
+                        help="Recurse into subdirectories in batch directory mode")
 
     parser.add_argument("--output", type=str,
                         help="Name of output file, defaults to the same filename as 'log'")
@@ -421,39 +441,195 @@ def main(argv=None):
         args.log_type = "FIT"
 
     if os.path.isdir(args.log):
-        dir_path = args.log
-        ext_filter = ".rcz" if args.log_type == "RCZ" else ".xrk" if args.log_type == "XRK" else ".fit" if args.log_type == "FIT" else ".csv"
-        matching_files = sorted([
-            os.path.join(dir_path, f) for f in os.listdir(dir_path)
-            if f.lower().endswith(ext_filter)
-        ])
-        if not matching_files:
-            print("ERROR: No %s files found in directory '%s'" % (ext_filter, dir_path))
-            return 1
+        return _batch_convert(args)
 
-        print("Found %d %s files in '%s'..." % (len(matching_files), ext_filter, dir_path))
-        for fpath in matching_files:
-            print("\n" + "=" * 80)
-            print("Processing: %s" % fpath)
-            args.log = fpath
-            args.output = None
-            if args.log_type == "RCZ" and str(args.stint).lower() == "all":
-                try:
-                    stints = _get_stints(fpath)
-                except Exception as e:
-                    print("ERROR: Failed to read RCZ stints in %s: %s" % (fpath, e))
-                    continue
-                if len(stints) > 1:
-                    base_name, _ = os.path.splitext(fpath)
-                    for st in stints:
-                        st_out = f"{base_name}_stint{st}"
-                        print("\n=== Exporting Stint %s -> %s ===" % (st, st_out))
-                        _process_one(args, stint_override=str(st), output_override=st_out)
-                    continue
-            _process_one(args)
-        print("\nBatch directory processing complete.")
-        return 0
+    return _convert_single_input(args)
 
+
+def _export_rcz_backup(args, backup_sessions):
+    """Export every session/stint of a RaceChrono backup archive. Returns exit code."""
+    if args.output:
+        print("ERROR: --output cannot be used with --session all; use --output-dir")
+        return 1
+    if str(args.stint).lower() != "all":
+        print("ERROR: --session all requires --stint all")
+        return 1
+
+    output_dir = args.output_dir
+    if not output_dir:
+        output_dir = os.path.splitext(args.log)[0] + "_sessions"
+    jobs = []
+    all_targets = []
+    for session in backup_sessions:
+        for stint in session.stints:
+            stem = session.session_id
+            if len(session.stints) > 1:
+                stem += "_stint%s" % stint
+            output_base = os.path.join(output_dir, stem)
+            _, _, targets = _output_paths(args, output_base)
+            jobs.append((session.session_id, stint, output_base))
+            all_targets.extend(targets)
+    try:
+        ensure_output_targets(
+            all_targets,
+            force=args.force,
+            source_path=args.log,
+        )
+    except (OSError, ValueError) as exc:
+        print("ERROR: %s" % exc)
+        print("Preflight failed; no sessions were exported.")
+        return 1
+
+    succeeded = 0
+    failures = []
+    for session_id, stint, output_base in jobs:
+        print("\n=== Exporting %s stint %s ===" % (session_id, stint))
+        try:
+            _process_one(
+                args,
+                stint_override=str(stint),
+                output_override=output_base,
+                session_override=session_id,
+            )
+            succeeded += 1
+        except SystemExit as exc:
+            failures.append((session_id, stint, "exit code %s" % exc.code))
+        except Exception as exc:
+            failures.append((session_id, stint, str(exc)))
+        if failures and failures[-1][0:2] == (session_id, stint):
+            print("ERROR: %s stint %s failed: %s" % failures[-1])
+
+    print(
+        "\nRCZ backup export complete: %d succeeded, %d failed."
+        % (succeeded, len(failures))
+    )
+    return 1 if failures else 0
+
+
+def _batch_convert(args):
+    """Convert every recognized log in a directory, detecting each file's format.
+
+    With AUTO (recommended), each file's type is detected individually, so RCZ,
+    CSV, VBO, IBT, XRK, and FIT inputs can be mixed in one run. Outputs are
+    written next to each input; existing outputs are skipped unless --force is
+    given. Returns exit code (0 unless at least one file failed).
+    """
+    import copy
+    import io
+    from contextlib import redirect_stdout
+
+    dir_path = args.log
+    if args.output:
+        print("ERROR: --output cannot be used with a directory; outputs are written next to each input")
+        return 1
+    if args.list_sessions:
+        print("ERROR: --list-sessions cannot be used with a directory; run it on a single RCZ backup")
+        return 1
+    if args.session is not None and str(args.session).lower() != "all":
+        print("ERROR: --session ID cannot be used with a directory; use --session all to expand backup archives")
+        return 1
+    if str(getattr(args, "stint", "all")).lower() != "all":
+        print("ERROR: --stint cannot be used with a directory")
+        return 1
+    if str(getattr(args, "lap", "all")).lower() != "all":
+        print("ERROR: --lap cannot be used with a directory")
+        return 1
+
+    if args.log_type == "AUTO":
+        wanted = _BATCH_AUTO_EXTENSIONS
+    else:
+        wanted = _BATCH_TYPE_EXTENSIONS.get(args.log_type, ())
+    if getattr(args, "recursive", False):
+        candidates = [
+            os.path.join(root, name)
+            for root, _, names in os.walk(dir_path)
+            for name in names
+        ]
+    else:
+        candidates = [
+            os.path.join(dir_path, name)
+            for name in os.listdir(dir_path)
+            if os.path.isfile(os.path.join(dir_path, name))
+        ]
+    files = sorted(path for path in candidates if path.lower().endswith(wanted))
+    if not files:
+        print("ERROR: No convertible logs (%s) found in directory '%s'" % (", ".join(wanted), dir_path))
+        return 1
+
+    expand_backups = args.session is not None and str(args.session).lower() == "all"
+    converted, skipped, failed = [], [], []
+    for index, fpath in enumerate(files, 1):
+        file_args = copy.copy(args)
+        file_args.log = fpath
+        file_args.output = None
+        detected = args.log_type
+        if args.log_type == "AUTO":
+            if fpath.lower().endswith(_BATCH_TYPE_EXTENSIONS["CAN"]):
+                if not args.dbc or not os.path.isfile(args.dbc or ""):
+                    skipped.append((fpath, "CAN log requires --dbc"))
+                    continue
+                detected = "CAN"
+            else:
+                detected = auto_detect_log_type(fpath)
+            file_args.log_type = detected
+        print("=" * 80)
+        print("Processing [%d/%d]: %s (type: %s)" % (index, len(files), fpath, detected))
+
+        if fpath.lower().endswith(".rcz") and detected == "RCZ":
+            try:
+                backup_sessions = discover_rcz_sessions(fpath)
+            except Exception as exc:
+                print("ERROR: Failed to inspect RCZ archive: %s" % exc)
+                failed.append(fpath)
+                continue
+            if backup_sessions:
+                if not expand_backups:
+                    print(
+                        "Skipped: RaceChrono backup contains %d sessions; "
+                        "re-run with --session all to expand it, or convert one "
+                        "session with '--session ID' on the single file."
+                        % len(backup_sessions)
+                    )
+                    skipped.append((fpath, "backup archive (use --session all)"))
+                    continue
+            else:
+                # A single-session RCZ must not inherit --session all.
+                file_args.session = None
+
+        buffer = io.StringIO()
+        try:
+            with redirect_stdout(buffer):
+                code = _convert_single_input(file_args)
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+            buffer.write("ERROR: exited with code %s\n" % code)
+        except Exception as exc:
+            code = 1
+            buffer.write("ERROR: %s: %s\n" % (type(exc).__name__, exc))
+        text = buffer.getvalue()
+        sys.stdout.write(text)
+        if not text.endswith("\n"):
+            print()
+        if code == 0:
+            converted.append(fpath)
+        elif "already exists" in text:
+            skipped.append((fpath, "output already exists (use --force)"))
+        else:
+            failed.append(fpath)
+
+    print("=" * 80)
+    print(
+        "Batch complete: %d converted, %d skipped, %d failed."
+        % (len(converted), len(skipped), len(failed))
+    )
+    for fpath, reason in skipped:
+        print("  skipped: %s (%s)" % (fpath, reason))
+    for fpath in failed:
+        print("  failed: %s" % fpath)
+    return 1 if failed else 0
+
+
+def _convert_single_input(args):
     if not os.path.isfile(args.log):
         print("ERROR: log file %s does not exist" % args.log)
         return 1
@@ -519,62 +695,7 @@ def main(argv=None):
                     print("ERROR: %s" % exc)
                     return 1
                 return 0
-            if args.output:
-                print("ERROR: --output cannot be used with --session all; use --output-dir")
-                return 1
-            if str(args.stint).lower() != "all":
-                print("ERROR: --session all requires --stint all")
-                return 1
-
-            output_dir = args.output_dir
-            if not output_dir:
-                output_dir = os.path.splitext(args.log)[0] + "_sessions"
-            jobs = []
-            all_targets = []
-            for session in backup_sessions:
-                for stint in session.stints:
-                    stem = session.session_id
-                    if len(session.stints) > 1:
-                        stem += "_stint%s" % stint
-                    output_base = os.path.join(output_dir, stem)
-                    _, _, targets = _output_paths(args, output_base)
-                    jobs.append((session.session_id, stint, output_base))
-                    all_targets.extend(targets)
-            try:
-                ensure_output_targets(
-                    all_targets,
-                    force=args.force,
-                    source_path=args.log,
-                )
-            except (OSError, ValueError) as exc:
-                print("ERROR: %s" % exc)
-                print("Preflight failed; no sessions were exported.")
-                return 1
-
-            succeeded = 0
-            failures = []
-            for session_id, stint, output_base in jobs:
-                print("\n=== Exporting %s stint %s ===" % (session_id, stint))
-                try:
-                    _process_one(
-                        args,
-                        stint_override=str(stint),
-                        output_override=output_base,
-                        session_override=session_id,
-                    )
-                    succeeded += 1
-                except SystemExit as exc:
-                    failures.append((session_id, stint, "exit code %s" % exc.code))
-                except Exception as exc:
-                    failures.append((session_id, stint, str(exc)))
-                if failures and failures[-1][0:2] == (session_id, stint):
-                    print("ERROR: %s stint %s failed: %s" % failures[-1])
-
-            print(
-                "\nRCZ backup export complete: %d succeeded, %d failed."
-                % (succeeded, len(failures))
-            )
-            return 1 if failures else 0
+            return _export_rcz_backup(args, backup_sessions)
         elif args.session:
             print("ERROR: --session is only valid for a multi-session RCZ backup")
             return 1
