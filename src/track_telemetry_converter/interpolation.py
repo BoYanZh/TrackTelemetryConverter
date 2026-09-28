@@ -13,6 +13,22 @@ def _interp_zoh(times_target, times_src, values_src):
     return values_src[idx]
 
 
+def _mask_interp_outside_range(values, times_target, times_src):
+    """Mark targets outside the source recording window as unavailable.
+
+    Linear interpolation and zero-order hold otherwise extend the first/last
+    sample indefinitely. Exact endpoint samples remain valid.
+    """
+    if len(times_src) == 0:
+        return np.full_like(values, np.nan, dtype=np.float64)
+    outside = (times_target < times_src[0]) | (times_target > times_src[-1])
+    if not np.any(outside):
+        return values
+    masked = np.array(values, dtype=np.float64, copy=True)
+    masked[outside] = np.nan
+    return masked
+
+
 def _mask_interp_gaps(values, times_target, times_src, gap_threshold_ms=DEFAULT_GAP_THRESHOLD_MS):
     """Set interpolated values to NaN where consecutive source samples are
     separated by more than gap_threshold_ms (dropped frames / gap artifacts).

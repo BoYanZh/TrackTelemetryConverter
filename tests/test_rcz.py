@@ -8,6 +8,7 @@ import zipfile
 from datetime import timezone
 
 import numpy as np
+import pytest
 from conftest import (
     _assert_cli_roundtrip,
     _run_cli_in_process,
@@ -17,6 +18,7 @@ from conftest import (
 )
 
 from track_telemetry_converter._vendor.ldparser import ldData
+from track_telemetry_converter.interpolation import _mask_interp_outside_range
 from track_telemetry_converter.log import DataLog
 from track_telemetry_converter.motec import MotecLog
 from track_telemetry_converter.output import atomic_write_motec_pair
@@ -107,6 +109,85 @@ def test_rcz_int64_device_timestamps_survive_low32_rollover():
             [0.1, 0.2, 0.3, 0.4, 0.5],
         )
         assert log.time_origin_epoch_ms == int(base)
+
+
+def test_rcz_outside_range_mask_keeps_endpoints_and_source_unchanged():
+    source = np.array([0.04, 0.10, 0.20])
+    target = np.array([0.0, 0.04, 0.10, 0.20, 0.24])
+    interpolated = np.array([10.0, 10.0, 20.0, 30.0, 30.0])
+    masked = _mask_interp_outside_range(interpolated, target, source)
+
+    np.testing.assert_allclose(masked, [np.nan, 10, 20, 30, np.nan])
+    np.testing.assert_array_equal(interpolated, [10, 10, 20, 30, 30])
+    assert np.isnan(_mask_interp_outside_range([1, 2], [0, 1], [])).all()
+
+
+@pytest.mark.parametrize("mask_interp_gaps", [False, True])
+def test_rcz_sensor_boundaries_use_per_sample_timestamps(tmp_path, mask_interp_gaps):
+    first = 1_700_000_000_000
+    # Deliberately irregular GPS intervals: no synthetic fixed-Hz timebase.
+    gps_ms = np.array([0, 40, 90, 140, 200, 260, 400, 500], dtype="<i8")
+    gps = gps_ms + first
+    imu_ms = np.array([40, 90, 200, 400], dtype="<i8")
+    gyro_ms = np.array([0, 90, 260], dtype="<i8")
+    can_ms = np.array([90, 200, 400], dtype="<i8")
+    path = tmp_path / "uneven-sensor-windows.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        archive.writestr("channel_1_300_0_1_1", gps.tobytes())
+        archive.writestr(
+            "channel_1_300_0_4_0",
+            np.full(gps.size, 10_000, dtype="<i4").tobytes(),
+        )
+        archive.writestr("channel_2_201_0_1_1", (first + imu_ms).tobytes())
+        archive.writestr(
+            "channel_2_201_0_10_0",
+            np.array([1000, 2000, 3000, 4000], dtype="<i4").tobytes(),
+        )
+        archive.writestr("channel_3_202_0_1_1", (first + gyro_ms).tobytes())
+        archive.writestr(
+            "channel_3_202_0_14_0",
+            np.array([1000, 2000, 3000], dtype="<i4").tobytes(),
+        )
+        for pid, values in (
+            ("10024", [1000.0, 3000.0, 5000.0]),  # continuous RPM
+            ("1004", [2.0, 3.0, 4.0]),  # discrete gear / ZOH
+        ):
+            archive.writestr(f"channel_12_100_{pid}_1_1", (first + can_ms).tobytes())
+            archive.writestr(
+                f"channel2_12_100_{pid}_{pid}_3",
+                np.array(values, dtype="<f8").tobytes(),
+            )
+        archive.writestr("channel_4_101_0_1_1", (first + imu_ms).tobytes())
+        archive.writestr(
+            "channel2_4_101_0_1002_3",
+            np.array([10.0, 20.0, 30.0, 40.0], dtype="<f8").tobytes(),
+        )
+
+    log = DataLog()
+    log.from_rcz_log(str(path), mask_interp_gaps=mask_interp_gaps)
+    expected_times = gps_ms.astype(np.float64) / 1000.0
+    assert log.time_origin_epoch_ms == first
+    for name in ("Ground Speed", "Engine RPM", "Gear", "CG Accel Lateral",
+                 "Chassis Yaw Rate", "Brake Pos"):
+        np.testing.assert_array_equal(log.channels[name].timestamps, expected_times)
+
+    rpm = log.channels["Engine RPM"].values
+    np.testing.assert_allclose(rpm, [np.nan, np.nan, 1000, 1909.090909, 3000,
+                                     3600, 5000, np.nan], atol=1e-5)
+    gear = log.channels["Gear"].values
+    np.testing.assert_allclose(gear, [np.nan, np.nan, 2, 2, 3, 3, 4, np.nan])
+    imu = log.channels["CG Accel Lateral"].values
+    np.testing.assert_allclose(imu, [np.nan, 0.1, 0.2, 0.245454545, 0.3,
+                                     0.33, 0.4, np.nan], atol=1e-5)
+    yaw = log.channels["Chassis Yaw Rate"].values
+    np.testing.assert_allclose(yaw, [1, 1.444444444, 2, 2.294117647,
+                                     2.647058824, 3, np.nan, np.nan], atol=1e-5)
+    brake = log.channels["Brake Pos"].values
+    np.testing.assert_allclose(brake, [np.nan, 10, 20, 24.545454545, 30,
+                                       33, 40, np.nan], atol=1e-5)
 
 
 def test_cli_rcz_backup_lists_sessions_without_exporting():

@@ -124,6 +124,10 @@ Run `track-telemetry --help` for the authoritative option list.
   timestamps remain zero-based seconds for MoTeC compatibility, while
   `DataLog.time_origin_epoch_ms` and `DataLog.datetime_utc` preserve the exact
   absolute origin for callers that need wall-clock alignment.
+- RCZ CAN/OBD and IMU channels use their recorded device timestamps. Values
+  outside each sensor's first/last sample are unavailable (`NaN`) rather than
+  repeated from an endpoint, even without `--mask-interp-gaps`. That flag
+  additionally masks long gaps *inside* the recorded interval.
 - `--min-lap-sec` controls the minimum reconstructed RCZ out/timed/in segment
   duration; the legacy `--min_lap_sec` spelling remains accepted.
 - An RCZ leading segment that starts at 5 km/h or faster is retained as a

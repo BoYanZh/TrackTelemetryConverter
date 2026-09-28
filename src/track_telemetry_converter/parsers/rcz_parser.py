@@ -23,7 +23,7 @@ from ..channels import (
     RCZ_PID_MAP,
 )
 from ..derived import derive_yaw_rate_from_gps_heading
-from ..interpolation import _interp_zoh, _mask_interp_gaps
+from ..interpolation import _interp_zoh, _mask_interp_gaps, _mask_interp_outside_range
 
 _PARTIAL_OUT_LAP_SPEED_KMH = 5.0
 _MIN_EPOCH_MS = 100_000_000_000
@@ -485,6 +485,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
                 resampled = np.interp(times_sec, imu_t, raw)
                 if mask_interp_gaps:
                     resampled = _mask_interp_gaps(resampled, times_sec, imu_t)
+                resampled = _mask_interp_outside_range(resampled, times_sec, imu_t)
                 populate_channel(out_name, units, resampled, decimals)
             elif len(raw) >= n_samples:
                 # Fallback: naive truncation (off by  1 sample)
@@ -580,6 +581,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
                 values = np.interp(times_sec, rel_times, raw_values)
                 if mask_interp_gaps:
                     values = _mask_interp_gaps(values, times_sec, rel_times)
+            values = _mask_interp_outside_range(values, times_sec, rel_times)
             if pid in rcz_pid_map:
                 ch_name, ch_unit, ch_scale, ch_offset = rcz_pid_map[pid]
                 if pid == "51" and not yaw_rate_from_can:
@@ -592,7 +594,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
                 elif ch_name not in data_log.channels:
                     vals_processed = values * ch_scale + ch_offset
                     if pid == "1004":
-                        vals_processed = np.nan_to_num(vals_processed, nan=0.0)
+                        # Do not turn unavailable gear samples into neutral.
                         vals_processed = np.round(vals_processed).clip(-1, 6)
                     populate_channel(ch_name, ch_unit, vals_processed)
             else:
@@ -655,9 +657,10 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
                         interpolated = np.interp(times_sec, rel_t, vals)
                         if mask_interp_gaps:
                             interpolated = _mask_interp_gaps(interpolated, times_sec, rel_t)
+                    interpolated = _mask_interp_outside_range(interpolated, times_sec, rel_t)
                     processed = interpolated * ch_scale + ch_offset
                     if pid == "1004":
-                        processed = np.nan_to_num(processed, nan=0.0)
+                        # Keep missing gear samples missing, not neutral.
                         processed = np.round(processed).clip(-1, 6)
                     if ch_name not in data_log.channels:
                         populate_channel(ch_name, ch_unit, processed)
