@@ -21,8 +21,16 @@ from .channels import (
 )
 from .models import Message
 
-DEFAULT_GEAR_RATIO_THRESHOLDS = (110.0, 70.0, 52.0, 42.0, 33.0, 20.0)
-def calculate_math_channels(data_log, g_source="auto", gear_ratio_thresholds=None):
+DEFAULT_GEAR_RATIO_THRESHOLDS_MT = (100.0, 64.0, 47.0, 38.0, 30.0, 20.0)
+DEFAULT_GEAR_RATIO_THRESHOLDS_AT = (90.0, 57.0, 40.0, 28.0, 21.0, 15.0)
+# Gear derivation is opt-in: no default thresholds. Pass explicit
+# gear_ratio_thresholds or gearbox="mt"/"at" to enable it.
+DEFAULT_GEAR_RATIO_THRESHOLDS = None
+GEARBOX_PRESETS = {
+    "mt": DEFAULT_GEAR_RATIO_THRESHOLDS_MT,
+    "at": DEFAULT_GEAR_RATIO_THRESHOLDS_AT,
+}
+def calculate_math_channels(data_log, g_source="auto", gear_ratio_thresholds=None, gearbox=None):
     """
     g_source: "auto" (default), "sensor", or "calc"
       - "auto": Use raw IMU sensor G channels if present; otherwise derive from GPS.
@@ -49,7 +57,10 @@ def calculate_math_channels(data_log, g_source="auto", gear_ratio_thresholds=Non
     derive_brake_pos(data_log)
     calculate_input_rates(data_log)
     mirror_throttle_accel(data_log)
-    derive_gear_from_rpm_speed(data_log, ratio_thresholds=gear_ratio_thresholds)
+    if gear_ratio_thresholds is None and gearbox is not None:
+        gear_ratio_thresholds = GEARBOX_PRESETS.get(str(gearbox).lower())
+    if gear_ratio_thresholds is not None:
+        derive_gear_from_rpm_speed(data_log, ratio_thresholds=gear_ratio_thresholds)
 
 
 def derive_gear_from_rpm_speed(data_log, ratio_thresholds=None):
@@ -97,7 +108,9 @@ def derive_gear_from_rpm_speed(data_log, ratio_thresholds=None):
 
     thresholds = ratio_thresholds
     if thresholds is None:
-        thresholds = data_log.metadata.get("gear_ratio_thresholds", DEFAULT_GEAR_RATIO_THRESHOLDS)
+        thresholds = data_log.metadata.get("gear_ratio_thresholds")
+    if thresholds is None:
+        return
     thresholds = np.asarray(thresholds, dtype=np.float64)
     if thresholds.shape != (6,) or not np.all(np.diff(thresholds) < 0):
         raise ValueError("gear ratio thresholds must contain six strictly descending values")

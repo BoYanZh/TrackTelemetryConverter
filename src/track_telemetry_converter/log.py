@@ -236,12 +236,13 @@ class DataLog(object):
         beacons.sort(key=lambda x: x[0])
         return beacons
 
-    def calculate_math_channels(self, g_source="auto", gear_ratio_thresholds=None):
+    def calculate_math_channels(self, g_source="auto", gear_ratio_thresholds=None, gearbox=None):
         from .derived import calculate_math_channels as _calc
         _calc(
             self,
             g_source=g_source,
             gear_ratio_thresholds=gear_ratio_thresholds,
+            gearbox=gearbox,
         )
 
     def _extract_datetime_from_text(self, log_lines, file_path=""):

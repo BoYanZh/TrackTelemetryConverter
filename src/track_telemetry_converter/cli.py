@@ -259,6 +259,7 @@ def process_one_file(args, stint_override=None, output_override=None,
     data_log.calculate_math_channels(
         g_source=getattr(args, "g_source", "auto"),
         gear_ratio_thresholds=getattr(args, "gear_ratio_thresholds", None),
+        gearbox=getattr(args, "gearbox", None),
     )
 
     print("Converting to MoTeC log...")
@@ -371,7 +372,9 @@ def build_parser():
     parser.add_argument("--g-source", type=str, default="auto", choices=["auto", "sensor", "calc"],
                         help="Source for G-force channels: 'auto' (use IMU sensor if present, fallback to GPS calc), 'sensor' (only IMU sensor), or 'calc' (force derive from GPS)")
     parser.add_argument("--gear-ratio-thresholds", type=parse_gear_ratio_thresholds, default=None,
-                        help="Six descending RPM/km/h thresholds for derived gears 1-6 (default: 110,70,52,42,33,20)")
+                        help="Opt-in: six descending RPM/km/h thresholds to derive gears 1-6 (e.g. MT: 100,64,47,38,30,20; AT: 90,57,40,28,21,15). Without this or --gearbox, no Gear is derived)")
+    parser.add_argument("--gearbox", type=str, default=None, choices=["mt", "at"],
+                        help="Opt-in gearbox preset for derived gears: 'mt' (GR86/BRZ 6MT: 100,64,47,38,30,20) or 'at' (GR86/BRZ 6AT: 90,57,40,28,21,15)")
     parser.add_argument("--frequency", type=str, default="auto",
                         help="Fixed frequency to resample all channels at (e.g. 20, 25, 50, 100 or 'auto', default: auto)")
     parser.add_argument("--gpx", action="store_true", help="Also generate GPX track file")
