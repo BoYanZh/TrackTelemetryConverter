@@ -239,7 +239,6 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
         col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
     col_decimals = [0] * len(col_specs)
     chan_buffers = [([], []) for _ in col_specs]
-    n_cols = len(col_specs)
     _QUOTES = ('"', "'")
 
     # Parse target_lap filter if specified
