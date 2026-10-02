@@ -212,93 +212,115 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
             data_log.add_channel(motec_name, motec_units, float, 0)
             active_columns.append((i, motec_name, raw_name))
 
-    # First pass to parse all valid data rows
-    valid_lines = []
-    for line in log_lines[header_idx + 1:]:
-        line_clean = line.strip("\n")
-        if not line_clean:
-            continue
-
-        # Skip unit rows (typically right after headers and start with empty timestamp or strings)
-        values = line_clean.split(",")
-        if not values[0]:
-            continue
-
-        try:
-            float(values[0].strip().strip('"').strip("'"))
-        except ValueError:
-            continue
-
-        valid_lines.append(values)
+    # Precompute per-column transforms so the hot row loop does no string
+    # normalization, dict lookups, or channel-attribute writes per cell.
+    # Each spec: (values index, Channel object, factor, offset) with
+    # value = (raw + offset) * factor. Precedence matches the historical
+    # elif chain: speed x3.6 > mph > psi-brake > F->C > bar-press > yaw-negate.
+    # The fused multiply-add form is bit-identical to the original
+    # per-branch expressions (adding +0.0 / multiplying by 1.0 are exact).
+    col_specs = []
+    for col_idx, name, raw_name in active_columns:
+        cell_lower = raw_name.lower().strip()
+        unit_lower = col_unit_map.get(raw_name, "")
+        factor, offset = 1.0, 0.0
+        if cell_lower == "speed":
+            factor = 3.6
+        elif unit_lower == "mph":
+            factor = 1.60934
+        elif unit_lower == "psi" and name == CH_BRAKE_PRESS:
+            factor = 6.89476
+        elif unit_lower == "f":
+            factor, offset = 5.0 / 9.0, -32.0
+        elif unit_lower == "bar" and "press" in name.lower():
+            factor = 100.0
+        elif cell_lower in ("yaw_rate", "z_rate_of_rotation", "y_rate_of_rotation") and name == CH_YAW_RATE:
+            factor = -1.0
+        col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
+    col_decimals = [0] * len(col_specs)
+    chan_buffers = [([], []) for _ in col_specs]
+    n_cols = len(col_specs)
+    _QUOTES = ('"', "'")
 
     # Parse target_lap filter if specified
     target_lap_str = None
     if target_lap is not None and str(target_lap).lower() != "all":
         target_lap_str = str(target_lap).strip()
 
-    # Track lap timing metadata & channel sample buffers
+    # Track lap timing metadata
     laps_timing = {}
-    chan_buffers = {name: ([], []) for _, name, _ in active_columns}
 
-    for values in valid_lines:
-        if lap_number_idx != -1 and lap_number_idx < len(values):
-            lap_val = values[lap_number_idx].strip().strip('"').strip("'")
+    # Single pass over data rows: split once, validate the timestamp, apply
+    # the lap filter, and append samples. (Previously this split every line
+    # twice and held all rows in memory as valid_lines.)
+    for line in log_lines[header_idx + 1:]:
+        values = line.strip("\n").split(",")
+        if not values or not values[0]:
+            continue
+        n_vals = len(values)
+
+        if lap_number_idx != -1 and lap_number_idx < n_vals:
+            lap_val = values[lap_number_idx]
+            s = lap_val.strip()
+            if s[:1] in _QUOTES or s[-1:] in _QUOTES:
+                s = s.strip('"').strip("'")
+            lap_val = s
             if target_lap_str and lap_val != target_lap_str:
                 continue
         else:
             lap_val = "1"
 
+        t_str = values[0].strip()
+        if t_str[:1] in _QUOTES or t_str[-1:] in _QUOTES:
+            t_str = t_str.strip('"').strip("'")
         try:
-            t = float(values[0].strip().strip('"').strip("'"))
+            t = float(t_str)
         except ValueError:
             continue
 
         # Record lap start/end times
-        if lap_val not in laps_timing:
-            laps_timing[lap_val] = {"start_time": t, "end_time": t, "messages_count": 0}
-        laps_timing[lap_val]["end_time"] = t
-        laps_timing[lap_val]["messages_count"] += 1
+        lap_info = laps_timing.get(lap_val)
+        if lap_info is None:
+            laps_timing[lap_val] = {"start_time": t, "end_time": t, "messages_count": 1}
+        else:
+            lap_info["end_time"] = t
+            lap_info["messages_count"] += 1
 
-        for col_idx, name, raw_name in active_columns:
-            if col_idx + 1 >= len(values):
+        for k, (val_idx, channel, factor, offset) in enumerate(col_specs):
+            if val_idx >= n_vals:
                 continue
 
-            val_str = values[col_idx + 1].strip().strip('"').strip("'")
-            if not val_str:
+            s = values[val_idx].strip()
+            if not s:
                 continue
+            if s[:1] in _QUOTES or s[-1:] in _QUOTES:
+                s = s.strip('"').strip("'")
+                if not s:
+                    continue
 
             try:
-                val = float(val_str)
-
-                # Convert speed based on unit or column name
-                raw_lower = raw_name.lower().strip()
-                unit_lower = col_unit_map.get(raw_name, "")
-                if raw_lower == "speed":
-                    val *= 3.6
-                elif unit_lower == "mph":
-                    val *= 1.60934
-                elif unit_lower == "psi" and name == CH_BRAKE_PRESS:
-                    val *= 6.89476
-                elif unit_lower == "f":
-                    val = (val - 32.0) * (5.0 / 9.0)
-                elif unit_lower == "bar" and "press" in name.lower():
-                    val *= 100.0
-                elif raw_lower in ("yaw_rate", "z_rate_of_rotation", "y_rate_of_rotation") and name == CH_YAW_RATE:
-                    val *= -1.0
-
-                ts_buf, val_buf = chan_buffers[name]
-                ts_buf.append(t)
-                val_buf.append(val)
-
-                val_text_split = val_str.split(".")
-                decimals_present = 0 if len(val_text_split) == 1 else len(val_text_split[1])
-                data_log.channels[name].decimals = max(decimals_present, data_log.channels[name].decimals)
+                val = float(s)
             except ValueError:
-                pass
+                continue
+            if factor != 1.0 or offset:
+                val = (val + offset) * factor
 
-    for name, (ts_buf, val_buf) in chan_buffers.items():
+            ts_buf, val_buf = chan_buffers[k]
+            ts_buf.append(t)
+            val_buf.append(val)
+
+            dot = s.find(".")
+            if dot >= 0:
+                d = len(s) - dot - 1
+                if d > col_decimals[k]:
+                    col_decimals[k] = d
+
+    for k, (_, channel, _, _) in enumerate(col_specs):
+        if col_decimals[k] > channel.decimals:
+            channel.decimals = col_decimals[k]
+        ts_buf, val_buf = chan_buffers[k]
         if ts_buf:
-            data_log.channels[name].set_samples(ts_buf, val_buf)
+            channel.set_samples(ts_buf, val_buf)
 
     # Fallback: derive Chassis Yaw Rate from GPS Heading derivative if missing
     derive_yaw_rate_from_gps_heading(data_log)
