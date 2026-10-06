@@ -190,6 +190,49 @@ def test_rcz_sensor_boundaries_use_per_sample_timestamps(tmp_path, mask_interp_g
                                        33, 40, np.nan], atol=1e-5)
 
 
+def test_rcz_maps_four_wheel_speed_pids(tmp_path):
+    """Wheel speed PIDs use raw m/s and map to FL/FR/RL/RR (km/h).
+
+    PID identities verified on 2026-10 Thunder Hill East Bypass sessions:
+    left = {197623, 132087}, driven (rear) axle = {132087, 99319}.
+    """
+    first = 1_700_000_000_000
+    stamps_ms = (first + np.array([0, 100, 200, 300], dtype="<i8")).astype("<i8")
+    path = tmp_path / "wheel-speeds.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        archive.writestr("channel_1_300_0_1_1", stamps_ms.tobytes())
+        archive.writestr(
+            "channel_1_300_0_4_0",
+            np.full(4, 10_000, dtype="<i4").tobytes(),
+        )
+        for pid in ("197623", "164855", "132087", "99319"):
+            archive.writestr(f"channel_12_200_{pid}_1_1", stamps_ms.tobytes())
+            archive.writestr(
+                f"channel2_12_200_{pid}_{pid}_3",
+                np.array([10.0, 20.0, 30.0, 40.0], dtype="<f8").tobytes(),
+            )
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    expected = {
+        "Wheel Speed FL": "197623",
+        "Wheel Speed FR": "164855",
+        "Wheel Speed RL": "132087",
+        "Wheel Speed RR": "99319",
+    }
+    assert set(expected) <= set(log.channels)
+    for name in expected:
+        channel = log.channels[name]
+        assert channel.units == "km/h"
+        np.testing.assert_allclose(
+            channel.values, [36.0, 72.0, 108.0, 144.0], atol=1e-9
+        )
+
+
 def test_cli_rcz_backup_lists_sessions_without_exporting():
     with tempfile.TemporaryDirectory() as tmp_dir:
         source = os.path.join(tmp_dir, "backup.rcz")

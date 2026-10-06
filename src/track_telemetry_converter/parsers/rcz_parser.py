@@ -99,12 +99,17 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
             return z.read(prefix + name)
 
         # RCZ binary channel naming conventions (RaceChrono internal format).
-        # The second device identifier varies with the RaceChrono hardware
-        # model.  Discover the known GPS/IMU variants instead of assuming
-        # that every archive uses the 200-series identifiers.
-        #   1/300, 1/200, 1/100 = GPS
-        #   2/301, 2/201, 2/101 = accelerometer
-        #   3/302, 3/202, 3/102 = gyroscope
+        # GPS + accel + gyro families always travel together per recording
+        # device (e.g. 1/100 + 2/101 + 3/102, or 1/200 + 2/201 + 3/202).
+        # The numbers are NOT hardware-fixed: the same physical receiver can
+        # show up under different numbers on different phones/pairings (one
+        # 2026-09 weekend logged 200 on one phone and 100 on another at the
+        # same track), and one session (2026-03-07) logged GPS from 300 while
+        # phone IMU rode along as 2_100/3_101 at its native 66/50 Hz.
+        # Identify the source by its clock signature instead: an external
+        # 25 Hz receiver (e.g. RaceBox) streams GPS+IMU on a single clock
+        # (rateRatio 1.0000000, 0.0 ms drift over a full session), while
+        # phone IMU keeps its own native rate.
         #   4/101 = phone IMU / secondary OBD
         #   12/* = primary OBD (car ECU via CAN)
         _GPS_DEV_PFX = tuple(
@@ -237,6 +242,14 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
                 break
         gps_speed_values = None
         if gps_prefix:
+            # Record which sensor family supplied GPS (e.g. rcz_gps_1_100),
+            # so a later session can tell at a glance which recording
+            # device was the source. NOTE: the number is not hardware-fixed
+            # (see comment above) -- identify the hardware by clock
+            # signature, not by this string.
+            _gps_parts = gps_prefix.split("_")
+            data_log.metadata["gps_source"] = "rcz_gps_%s_%s" % (
+                _gps_parts[1], _gps_parts[2])
             speed_key = gps_prefix + "4_0"
             if speed_key in namelist:
                 raw_speed = np.frombuffer(read_channel(speed_key), dtype="<i4")

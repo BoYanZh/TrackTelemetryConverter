@@ -147,14 +147,20 @@ CHANNEL_ALIASES = {
     "Gear":                   (CH_GEAR, "", 0),
 
     # RaceChrono raw OBD_ IDs (Toyota GR86 / FT86 CAN Bus)
+    # NOTE: the even PIDs are tire pressures (kPa, verified on the
+    # 2026-09-13 Buttonwillow session: ~193-262 kPa). The odd PIDs are NOT
+    # tire status -- they are the four wheel speeds in m/s (verified on the
+    # 2026-10-03/04 Thunder Hill sessions, see RCZ_PID_MAP). The alias table
+    # carries no scale factor, so these map to km/h and rely on the consumer
+    # (xrk_parser._convert_values handles m/s -> km/h).
     "OBD_164854":             ("Tire Press FL", "kPa", 2),
     "OBD_132086":             ("Tire Press FR", "kPa", 2),
     "OBD_197622":             ("Tire Press RL", "kPa", 2),
     "OBD_99318":              ("Tire Press RR", "kPa", 2),
-    "OBD_164855":             ("Tire Status FL", "", 0),
-    "OBD_132087":             ("Tire Status FR", "", 0),
-    "OBD_197623":             ("Tire Status RL", "", 0),
-    "OBD_99319":              ("Tire Status RR", "", 0),
+    "OBD_164855":             (CH_WHEEL_SPEED_FR, "km/h", 2),
+    "OBD_132087":             (CH_WHEEL_SPEED_RL, "km/h", 2),
+    "OBD_197623":             (CH_WHEEL_SPEED_FL, "km/h", 2),
+    "OBD_99319":              (CH_WHEEL_SPEED_RR, "km/h", 2),
     "OBD_3155786":            (CH_ENGINE_OIL_TEMP, "C", 2),
     "OBD_45098826":           (CH_AMBIENT_TEMP, "C", 2),
     "OBD_1020":               ("Fuel Level", "%", 2),
@@ -228,6 +234,23 @@ RCZ_PID_MAP = {
     "8":     (CH_PITCH_ANGLE, "deg", 1.0, 0.0),           # Pitch Angle (-10.6 ~ 4.0 deg)
     "10031": (CH_AMBIENT_TEMP, "C", 1.0, 0.0),            # Ambient Temp (16 ~ 87 C)
     "1053576": (CH_WHEEL_SPEED_AVG, "rpm", 1.0, 0.0),     # Wheel Speed (1296 ~ 3230)
+    # Four individual wheel speeds, raw unit is m/s (0 ~ 49 m/s).
+    # Verified on 2026-10-03/04 Thunder Hill East Bypass sessions (RWD GR86):
+    # left = {197623, 132087} vs right = {164855, 99319} from GPS-heading-backed
+    # turn analysis; driven (rear) axle = {132087, 99319} from monotonic
+    # throttle/brake response (spins up under power, dips under braking).
+    "197623": (CH_WHEEL_SPEED_FL, "km/h", 3.6, 0.0),
+    "164855": (CH_WHEEL_SPEED_FR, "km/h", 3.6, 0.0),
+    "132087": (CH_WHEEL_SPEED_RL, "km/h", 3.6, 0.0),
+    "99319":  (CH_WHEEL_SPEED_RR, "km/h", 3.6, 0.0),
+    # Tire pressures in kPa (verified value range ~193-262 kPa on the
+    # 2026-09-13 Buttonwillow session). Corner assignment below follows the
+    # pre-existing CHANNEL_ALIASES guess and is NOT verified -- the sibling
+    # wheel-speed PIDs turned out to use a different corner scheme.
+    "164854": ("Tire Press FL", "kPa", 1.0, 0.0),
+    "132086": ("Tire Press FR", "kPa", 1.0, 0.0),
+    "197622": ("Tire Press RL", "kPa", 1.0, 0.0),
+    "99318":  ("Tire Press RR", "kPa", 1.0, 0.0),
 }
 
 # ----------------------------------------------------------------------------
