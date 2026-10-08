@@ -43,6 +43,7 @@ CH_GEARBOX_TEMP         = "Gearbox Temp"
 CH_YAW_RATE             = "Chassis Yaw Rate"
 CH_LEAN_ANGLE           = "Lean Angle"
 CH_INTAKE_TEMP          = "Intake Temp"
+CH_MANIFOLD_PRESS       = "Manifold Press"
 CH_AMBIENT_TEMP         = "Ambient Temp"
 CH_ROLL_ANGLE           = "Roll Angle"
 CH_PITCH_ANGLE          = "Pitch Angle"
@@ -56,6 +57,14 @@ CH_BRAKE_PRESS_FL       = "Brake Press FL"
 CH_BRAKE_PRESS_FR       = "Brake Press FR"
 CH_BRAKE_PRESS_RL       = "Brake Press RL"
 CH_BRAKE_PRESS_RR       = "Brake Press RR"
+CH_TIRE_PRESS_FL        = "Tire Press FL"
+CH_TIRE_PRESS_FR        = "Tire Press FR"
+CH_TIRE_PRESS_RL        = "Tire Press RL"
+CH_TIRE_PRESS_RR        = "Tire Press RR"
+CH_FUEL_LEVEL           = "Fuel Level"
+CH_BATTERY_VOLTAGE      = "Battery Voltage"
+CH_TRACK_TEMP           = "Track Temp"
+CH_LAP_DISTANCE         = "Lap Distance"
 
 DISCRETE_CHANNELS = {CH_GEAR, CH_LAP_NUMBER, CH_GPS_FIX, CH_GPS_SATS}
 
@@ -153,17 +162,18 @@ CHANNEL_ALIASES = {
     # 2026-10-03/04 Thunder Hill sessions, see RCZ_PID_MAP). The alias table
     # carries no scale factor, so these map to km/h and rely on the consumer
     # (xrk_parser._convert_values handles m/s -> km/h).
-    "OBD_164854":             ("Tire Press FL", "kPa", 2),
-    "OBD_132086":             ("Tire Press FR", "kPa", 2),
-    "OBD_197622":             ("Tire Press RL", "kPa", 2),
-    "OBD_99318":              ("Tire Press RR", "kPa", 2),
+    "OBD_164854":             (CH_TIRE_PRESS_FL, "kPa", 2),
+    "OBD_132086":             (CH_TIRE_PRESS_FR, "kPa", 2),
+    "OBD_197622":             (CH_TIRE_PRESS_RL, "kPa", 2),
+    "OBD_99318":              (CH_TIRE_PRESS_RR, "kPa", 2),
     "OBD_164855":             (CH_WHEEL_SPEED_FR, "km/h", 2),
     "OBD_132087":             (CH_WHEEL_SPEED_RL, "km/h", 2),
     "OBD_197623":             (CH_WHEEL_SPEED_FL, "km/h", 2),
     "OBD_99319":              (CH_WHEEL_SPEED_RR, "km/h", 2),
     "OBD_3155786":            (CH_ENGINE_OIL_TEMP, "C", 2),
     "OBD_45098826":           (CH_AMBIENT_TEMP, "C", 2),
-    "OBD_1020":               ("Fuel Level", "%", 2),
+    "OBD_1020":               (CH_FUEL_LEVEL, "%", 2),
+    # Raw undecoded OBD fallbacks below are intentionally literal, not canonical channels.
     "OBD_10058":              ("Analog 1", "", 2),
     "OBD_44050250":           ("Digital 42", "", 0),
     "OBD_44045193":           ("Status Flag 44045193", "", 0),
@@ -191,11 +201,11 @@ IBT_CHANNEL_MAP = [
     ("WaterTemp",          CH_COOLANT_TEMP,     "C",       2, None),
     ("OilTemp",            CH_ENGINE_OIL_TEMP,  "C",       2, None),
     ("OilPress",           CH_ENGINE_OIL_PRESS, "kPa",     2, lambda x: x * 100.0),
-    ("ManifoldPress",      "Manifold Press",    "kPa",     2, lambda x: x * 100.0),
-    ("FuelLevel",          "Fuel Level",        "l",       2, None),
-    ("Voltage",            "Battery Voltage",   "V",       2, None),
-    ("TrackTemp",          "Track Temp",        "C",       2, None),
-    ("LapDistPct",         "Lap Distance",      "%",       2, lambda x: x * 100.0),
+    ("ManifoldPress",      CH_MANIFOLD_PRESS,   "kPa",     2, lambda x: x * 100.0),
+    ("FuelLevel",          CH_FUEL_LEVEL,       "l",       2, None),
+    ("Voltage",            CH_BATTERY_VOLTAGE,  "V",       2, None),
+    ("TrackTemp",          CH_TRACK_TEMP,       "C",       2, None),
+    ("LapDistPct",         CH_LAP_DISTANCE,     "%",       2, lambda x: x * 100.0),
 ]
 
 IBT_WHEEL_SPEED_MAP = [
@@ -226,6 +236,7 @@ RCZ_PID_MAP = {
     "10026": (CH_COOLANT_TEMP, "C", 1.0, 0.0),            # 67 ~ 95 C
     "1005":  (CH_GEARBOX_TEMP, "C", 1.0, 0.0),            # 63 ~ 114 C
     "10029": (CH_INTAKE_TEMP, "C", 1.0, 0.0),             # 29 ~ 42 C
+    "10027": (CH_MANIFOLD_PRESS, "kPa", 1.0, 0.0),        # 20 ~ 100 kPa
     "1001":  (CH_STEERING_ANGLE, "deg", -1.0, 0.0),       # -294 ~ 457 deg
     "1004":  (CH_GEAR, "", 1.0, 0.0),                     # -1 ~ 5 (Integer gear)
     "4":     (CH_GROUND_SPEED, "km/h", 3.6, 0.0),         # raw is m/s (0 ~ 50 m/s -> km/h)
@@ -247,10 +258,10 @@ RCZ_PID_MAP = {
     # 2026-09-13 Buttonwillow session). Corner assignment below follows the
     # pre-existing CHANNEL_ALIASES guess and is NOT verified -- the sibling
     # wheel-speed PIDs turned out to use a different corner scheme.
-    "164854": ("Tire Press FL", "kPa", 1.0, 0.0),
-    "132086": ("Tire Press FR", "kPa", 1.0, 0.0),
-    "197622": ("Tire Press RL", "kPa", 1.0, 0.0),
-    "99318":  ("Tire Press RR", "kPa", 1.0, 0.0),
+    "164854": (CH_TIRE_PRESS_FL, "kPa", 1.0, 0.0),
+    "132086": (CH_TIRE_PRESS_FR, "kPa", 1.0, 0.0),
+    "197622": (CH_TIRE_PRESS_RL, "kPa", 1.0, 0.0),
+    "99318":  (CH_TIRE_PRESS_RR, "kPa", 1.0, 0.0),
 }
 
 # ----------------------------------------------------------------------------
