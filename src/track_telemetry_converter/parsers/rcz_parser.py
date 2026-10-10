@@ -58,6 +58,41 @@ def _set_absolute_origin(data_log, epoch_ms):
     data_log.datetime = datetime.datetime.fromtimestamp(origin_ms / 1000.0)
 
 
+
+
+def _resolve_rcz_prefix(z, target_session, target_stint):
+    """Resolve archive prefix and prefix-stripped namelist for session/stint."""
+    all_names = z.namelist()
+    session_prefix = ""
+    if target_session is not None:
+        session_prefix = f"sessions/{target_session}/"
+        if session_prefix + "session.json" not in all_names:
+            raise ValueError(f"RCZ session not found: {target_session}")
+    prefix = session_prefix
+    if target_stint is not None and str(target_stint).lower() != "all":
+        stint_value = int(target_stint)
+        if stint_value > 0:
+            prefix += f"resume_{stint_value}/"
+    namelist = [n[len(prefix):] for n in all_names if n.startswith(prefix)]
+    return prefix, session_prefix, namelist
+
+def _read_rcz_entry(z, prefix, name):
+    """Read one prefix-relative entry from the RCZ archive."""
+    return z.read(prefix + name)
+
+def _load_rcz_session(z, all_names, session_prefix):
+    """Load session.json; return (session_json, first_t) or None when missing."""
+    import json
+    session_key = session_prefix + "session.json"
+    if session_key not in all_names:
+        print("ERROR: Invalid RCZ file, missing session.json")
+        return
+
+    session_json = json.loads(z.read(session_key).decode("utf-8"))
+    first_t = session_json.get("firstTimestamp", 0)
+    return session_json, first_t
+
+
 def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  # noqa: C901 - legacy branchy parser; split when extending
                   min_lap_sec=15.0, mask_interp_gaps=False,
                   target_session=None):
@@ -67,6 +102,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
     target_lap: String, int, or None. If None or 'all', processes all laps in the session.
     target_session: Nested session directory ID in a RaceChrono backup, or None.
     """
+    import functools
     import json
     import os
     import zipfile
@@ -84,20 +120,8 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
 
     with zipfile.ZipFile(rcz_file_path, "r") as z:
         all_names = z.namelist()
-        session_prefix = ""
-        if target_session is not None:
-            session_prefix = f"sessions/{target_session}/"
-            if session_prefix + "session.json" not in all_names:
-                raise ValueError(f"RCZ session not found: {target_session}")
-        prefix = session_prefix
-        if target_stint is not None and str(target_stint).lower() != "all":
-            stint_value = int(target_stint)
-            if stint_value > 0:
-                prefix += f"resume_{stint_value}/"
-        namelist = [n[len(prefix):] for n in all_names if n.startswith(prefix)]
-        def read_channel(name):
-            return z.read(prefix + name)
-
+        prefix, session_prefix, namelist = _resolve_rcz_prefix(z, target_session, target_stint)
+        read_channel = functools.partial(_read_rcz_entry, z, prefix)
         # RCZ binary channel naming conventions (RaceChrono internal format).
         # GPS + accel + gyro families always travel together per recording
         # device (e.g. 1/100 + 2/101 + 3/102, or 1/200 + 2/201 + 3/202).
@@ -122,13 +146,10 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         )
         _obd_dev4_ts_key  = "channel_4_101_0_1_1"
 
-        session_key = session_prefix + "session.json"
-        if session_key not in all_names:
-            print("ERROR: Invalid RCZ file, missing session.json")
+        session_data = _load_rcz_session(z, all_names, session_prefix)
+        if session_data is None:
             return
-
-        session_json = json.loads(z.read(session_key).decode("utf-8"))
-        first_t = session_json.get("firstTimestamp", 0)
+        session_json, first_t = session_data
 
         traps_list = []
         track_key = session_prefix + "trackId.json"
