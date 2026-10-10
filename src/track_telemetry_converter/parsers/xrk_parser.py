@@ -242,7 +242,7 @@ def _filter_xrk_lap(data_log, laps_info, target_lap):
         print(f"WARNING: Lap '{target_lap}' not found in XRK file; keeping all laps")
 
 
-def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
+def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
     """ Creates channels populated with messages from an AIM .xrk/.xrz log file. """
     try:
         from libxrk import aim_xrk
