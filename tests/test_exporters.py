@@ -5,9 +5,10 @@ import os
 import tempfile
 import xml.etree.ElementTree as ET
 
-from conftest import _read_lines
+from conftest import EXAMPLES, _read_lines, _run_cli_in_process
 
 from track_telemetry_converter.exporters.csv_export import write_csv
+from track_telemetry_converter.exporters.gpx_export import write_gpx, write_kml
 from track_telemetry_converter.exporters.xml_utils import indent_xml
 from track_telemetry_converter.log import DataLog
 from track_telemetry_converter.models import Message
@@ -68,3 +69,86 @@ def test_xml_indent_fallback_for_python_38(monkeypatch):
     assert ET.tostring(root, encoding="unicode") == (
         "<root>\n  <child>value</child>\n</root>"
     )
+
+
+def _synthetic_gps_log():
+    log = DataLog()
+    log.add_channel("Ground Speed", "km/h", float, 2)
+    log.channels["Ground Speed"].messages = [
+        Message(i / 10.0, 100.0 + i) for i in range(101)
+    ]
+    for name, base in (("GPS Latitude", 39.0), ("GPS Longitude", -122.0)):
+        log.add_channel(name, "deg", float, 7)
+        log.channels[name].messages = [
+            Message(i / 10.0, base + i * 1e-5) for i in range(101)
+        ]
+    log.add_channel("GPS Altitude", "m", float, 2)
+    log.channels["GPS Altitude"].messages = [
+        Message(i / 10.0, 85.0) for i in range(101)
+    ]
+    return log
+
+
+def test_gpx_export_writes_trackpoints():
+    from track_telemetry_converter.motec import MotecLog
+
+    log = _synthetic_gps_log()
+    motec_log = MotecLog()
+    with tempfile.NamedTemporaryFile(suffix=".gpx", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        assert write_gpx(motec_log, tmp_path, log)
+        root = ET.parse(tmp_path).getroot()
+        ns = {"g": "http://www.topografix.com/GPX/1/1"}
+        points = root.findall(".//g:trkpt", ns)
+        assert len(points) > 10
+        assert abs(float(points[0].get("lat") or 0.0) - 39.0) < 1e-9
+    finally:
+        os.remove(tmp_path)
+
+
+def test_kml_export_writes_linestring():
+    from track_telemetry_converter.motec import MotecLog
+
+    log = _synthetic_gps_log()
+    motec_log = MotecLog()
+    with tempfile.NamedTemporaryFile(suffix=".kml", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        assert write_kml(motec_log, tmp_path, log)
+        root = ET.parse(tmp_path).getroot()
+        ns = {"k": "http://www.opengis.net/kml/2.2"}
+        coords = root.find(".//k:coordinates", ns)
+        assert coords is not None and coords.text is not None
+        assert coords.text.strip().startswith("-122.0000000,39.0000000,85.00")
+    finally:
+        os.remove(tmp_path)
+
+
+def test_gpx_export_requires_gps():
+    from track_telemetry_converter.motec import MotecLog
+
+    log = DataLog()
+    log.add_channel("Engine RPM", "rpm", float, 0)
+    log.channels["Engine RPM"].messages = [Message(0.0, 3000.0)]
+    assert not write_gpx(MotecLog(), "unused.gpx", log)
+    assert not write_kml(MotecLog(), "unused.kml", log)
+
+
+def test_cli_export_flags_end_to_end():
+    source = os.path.join(EXAMPLES, "vbo_sample.vbo")
+    for flag, ext, marker in (
+        ("--csv", ".csv", "Time (s)"),
+        ("--gpx", ".gpx", "<gpx"),
+        ("--kml", ".kml", "<kml"),
+    ):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out = os.path.join(tmp_dir, "out.ld")
+            result = _run_cli_in_process(
+                [source, "VBO", "--output", out, "--force", flag]
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            extra = os.path.splitext(out)[0] + ext
+            assert os.path.isfile(extra)
+            with open(extra, encoding="utf-8", errors="ignore") as f:
+                assert marker in f.read(400)

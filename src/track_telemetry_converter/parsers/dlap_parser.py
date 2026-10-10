@@ -17,9 +17,20 @@ encrypted `<groupId>.group` blob. Decrypting the blob yields an inner ZIP with:
   calibration; informational only.
 
 Column semantics were reverse-engineered from Dragy's web frontend
-(`processLine`/`CsvParseGps`) and cross-validated against a paired
+(`processLine`/`CsvParseGps` for the loopdata columns, `decryptFile` +
+`unZip`/`decodeGroup` for the AES layer, `interpolateFrame` for the
+per-point field set) and cross-validated against a paired
 Dragy-exported `.vbo` of the same session (speed/lat/lon/alt/heading/sats
 r > 0.998, OBD rpm r > 0.999 at zero offset).
+
+Notes and gotchas:
+- Column 1 is GPS seconds-of-week, not milliseconds: 602837 at session
+  start is Saturday 23:26:59 UTC (day 6 SOW 602818 + 19 leap seconds).
+- Columns 16 and 18-24 are signal/fix diagnostics the frontend never
+  reads; they are skipped here.
+- OBD coverage may end mid-session (observed: dongle falls silent while
+  BLE stays up; Dragy's own VBO writer forward-fills stale values from
+  there on, this importer records NaN instead).
 
 The AES key/IV are shipped inside Dragy's public web frontend and are needed
 to read the user's own file; decryption requires `pycryptodome`

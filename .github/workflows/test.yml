@@ -55,6 +55,22 @@ jobs:
         run: python -m pytest -q
       - name: Verify golden snapshots
         run: python tests/golden_verify.py
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Run tests with coverage gate
+        run: >
+          python -m pytest -q --cov=track_telemetry_converter
+          --cov-report=term-missing --cov-fail-under=75
       - name: Build wheel
         run: python -m pip wheel --no-deps --wheel-dir dist .
       - name: Compile Python sources
