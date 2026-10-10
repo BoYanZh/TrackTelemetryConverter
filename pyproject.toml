@@ -63,7 +63,7 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B"]
+select = ["E", "F", "W", "I", "B", "UP031"]
 ignore = ["E501"]
 
 [tool.pyright]

@@ -40,7 +40,7 @@ def parse_csv_log(data_log, log_lines):
     kept_names = []
     for name in channel_names:
         if len(name) > 32:
-            print("WARNING: Ignoring over-long CSV column (file metadata, not data): %s..." % name[:48])
+            print("WARNING: Ignoring over-long CSV column (file metadata, not data): {}...".format(name[:48]))
             continue
         kept_names.append(name)
     channel_names = kept_names
@@ -79,7 +79,7 @@ def parse_csv_log(data_log, log_lines):
                 decimals_present = 0 if len(val_text_split) == 1 else len(val_text_split[1])
                 data_log.channels[name].decimals = max(decimals_present, data_log.channels[name].decimals)
             except ValueError:
-                print("WARNING: Found non numeric values for channel %s, removing channel" % name)
+                print("WARNING: Found non numeric values for channel {}, removing channel".format(name))
                 invalid_channels.append(name)
 
         for name in invalid_channels:

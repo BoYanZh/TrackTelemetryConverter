@@ -18,7 +18,7 @@ class Message(object):
         self.value = float(value)
 
     def __str__(self):
-        return ("t=%f, value=%f" % (self.timestamp, self.value))
+        return ("t={:f}, value={:f}".format(self.timestamp, self.value))
 
 
 class MessageListProxy(Sequence[Message]):

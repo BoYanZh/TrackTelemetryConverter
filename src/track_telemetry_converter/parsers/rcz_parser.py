@@ -79,21 +79,21 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
         raise ValueError("min_lap_sec must be a positive finite number")
 
     if not os.path.isfile(rcz_file_path):
-        print("ERROR: RCZ file %s does not exist" % rcz_file_path)
+        print("ERROR: RCZ file {} does not exist".format(rcz_file_path))
         return
 
     with zipfile.ZipFile(rcz_file_path, 'r') as z:
         all_names = z.namelist()
         session_prefix = ""
         if target_session is not None:
-            session_prefix = "sessions/%s/" % target_session
+            session_prefix = "sessions/{}/".format(target_session)
             if session_prefix + "session.json" not in all_names:
-                raise ValueError("RCZ session not found: %s" % target_session)
+                raise ValueError("RCZ session not found: {}".format(target_session))
         prefix = session_prefix
         if target_stint is not None and str(target_stint).lower() != "all":
             stint_value = int(target_stint)
             if stint_value > 0:
-                prefix += "resume_%s/" % stint_value
+                prefix += "resume_{}/".format(stint_value)
         namelist = [n[len(prefix):] for n in all_names if n.startswith(prefix)]
         def read_channel(name):
             return z.read(prefix + name)
@@ -248,7 +248,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
             # (see comment above) -- identify the hardware by clock
             # signature, not by this string.
             _gps_parts = gps_prefix.split("_")
-            data_log.metadata["gps_source"] = "rcz_gps_%s_%s" % (
+            data_log.metadata["gps_source"] = "rcz_gps_{}_{}".format(
                 _gps_parts[1], _gps_parts[2])
             speed_key = gps_prefix + "4_0"
             if speed_key in namelist:

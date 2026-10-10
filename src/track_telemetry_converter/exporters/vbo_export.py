@@ -187,7 +187,7 @@ def write_vbo(data_log, vbo_filename):
 
     origin = _utc_origin(data_log)
     if origin is not None:
-        date_line = "File created on %s @ %s" % (
+        date_line = "File created on {} @ {}".format(
             origin.strftime("%d/%m/%Y"), origin.strftime("%H:%M")
         )
         day_start = origin.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -215,13 +215,13 @@ def write_vbo(data_log, vbo_filename):
             mm = int((tod_s % 3600) // 60)
             ss = tod_s % 60
             row = [
-                "%03d" % (int(round(sats[i])) if np.isfinite(sats[i]) else 0),
-                "%02d%02d%06.3f" % (hh, mm, ss),
-                "%+011.6f" % (lat[i] * 60.0),
-                "%+011.6f" % (lon[i] * 60.0),
-                "%07.3f" % vel[i],
-                "%06.2f" % heading[i],
-                "%+09.2f" % height[i],
+                "{:03d}".format(int(round(sats[i])) if np.isfinite(sats[i]) else 0),
+                "{:02d}{:02d}{:06.3f}".format(hh, mm, ss),
+                "{:+011.6f}".format(lat[i] * 60.0),
+                "{:+011.6f}".format(lon[i] * 60.0),
+                "{:07.3f}".format(vel[i]),
+                "{:06.2f}".format(heading[i]),
+                "{:+09.2f}".format(height[i]),
             ]
             for _, _, fmt, vals in extras:
                 row.append(fmt(vals[i]))

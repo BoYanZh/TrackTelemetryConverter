@@ -457,7 +457,7 @@ class DataLog(object):
             return None, None, None, None
 
     def __str__(self):
-        output = "Log: %s, Duration: %f s" % (self.name, (self.end() - self.start()))
+        output = "Log: {}, Duration: {:f} s".format(self.name, (self.end() - self.start()))
         for channel_data in self.channels.values():
-            output += "\n\t%s" % channel_data
+            output += "\n\t{}".format(channel_data)
         return output
