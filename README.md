@@ -48,6 +48,11 @@ python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
+The git-ignored `data/` corpus has its own manual gate (not run in CI):
+`python tools/corpus_check.py --dir data --bless` snapshots structural
+stats, then plain `python tools/corpus_check.py --dir data` diffs against
+them. See the script header for the privacy design.
+
 ## Use
 
 The installed command is the primary interface:
