@@ -139,6 +139,8 @@ Run `track-telemetry --help` for the authoritative option list.
 - `--mask-interp-gaps` leaves long sampling gaps as `NaN` instead of bridging
   them.
 - `--csv`, `--vbo`, `--dlap`, `--gpx`, and `--kml` add optional exports.
+- `--vbo-columns` selects a subset of VBO extra columns, or renames them
+  (`CustomName=Channel Name`); defaults to all available extras.
 
 ## Project layout
 
