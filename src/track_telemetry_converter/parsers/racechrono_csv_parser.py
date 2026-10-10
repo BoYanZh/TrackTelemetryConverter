@@ -42,6 +42,11 @@ from ..channels import (
 from ..derived import derive_yaw_rate_from_gps_heading
 
 
+def _norm_header(name):
+    """Normalize a header for map lookup (case/underscores/dashes)."""
+    return name.lower().strip().replace("_", " ").replace("-", " ")
+
+
 def parse_racechrono_log(data_log, log_lines, target_lap=None):
     """ Creates channels populated with messages from a RaceChrono CSV log file.
 
@@ -68,7 +73,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
             continue
         try:
             parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_clean]))]
-        except Exception:
+        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
             parts = [p.strip().strip('"').strip("'") for p in line_clean.split(",")]
         if parts and len(parts) > 2:
             first_col = parts[0].lower()
@@ -89,13 +94,13 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
     if header_idx + 1 < len(log_lines):
         next_line = log_lines[header_idx + 1].strip("\n")
         splits = [s.strip().strip('"').strip("'") for s in next_line.split(",")]
-        if splits and splits[0].lower() in ["s", "sec", "seconds", ""]:
+        if splits and splits[0].lower() in ["s", "sec", "seconds", "", "unix time"]:
             unit_row = splits
 
     channel_names = raw_headers[1:]
 
     # Check if yaw_rate exists, otherwise check for y_rate_of_rotation / z_rate_of_rotation / GPS Gyro
-    has_yaw = any(h.lower() in ["yaw_rate", "gps gyro", "chassis yaw rate"] for h in channel_names)
+    has_yaw = any(_norm_header(h) in ["yaw rate", "gps gyro", "chassis yaw rate"] for h in channel_names)
 
     # Base mapping from typical RaceChrono / AiM / MoTeC columns to MoTeC terminology and units.
     rc_to_motec_map = {
@@ -161,12 +166,15 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
         "engine oil temperature (.c) *canbus": {"name": CH_ENGINE_OIL_TEMP, "units": "C"},
     }
 
+    # Map keys are matched against underscore/dash-normalized headers.
+    rc_to_motec_map = {_norm_header(k): v for k, v in rc_to_motec_map.items()}
+
     # Fallback for yaw rate if not named "yaw_rate" or "gps gyro"
     if not has_yaw:
-        if "z_rate_of_rotation" in channel_names:
-            rc_to_motec_map["z_rate_of_rotation"] = {"name": CH_YAW_RATE, "units": "deg/s"}
-        elif "y_rate_of_rotation" in channel_names:
-            rc_to_motec_map["y_rate_of_rotation"] = {"name": CH_YAW_RATE, "units": "deg/s"}
+        if "z rate of rotation" in [_norm_header(h) for h in channel_names]:
+            rc_to_motec_map["z rate of rotation"] = {"name": CH_YAW_RATE, "units": "deg/s"}
+        elif "y rate of rotation" in [_norm_header(h) for h in channel_names]:
+            rc_to_motec_map["y rate of rotation"] = {"name": CH_YAW_RATE, "units": "deg/s"}
 
     # Explicitly ignore uncalibrated raw IMU channels
     ignored_columns = {
@@ -183,11 +191,11 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
     col_unit_map = {}
 
     for i, raw_name in enumerate(channel_names):
-        raw_lower = raw_name.lower().strip().replace("_", " ").replace("-", " ")
+        raw_lower = _norm_header(raw_name)
         if not raw_name or raw_lower in ignored_columns:
             continue
 
-        if raw_lower == "lap_number" or raw_lower == "lap":
+        if raw_lower == "lap number" or raw_lower == "lap":
             lap_number_idx = i + 1
 
         unit_str = ""
@@ -221,10 +229,10 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
     # per-branch expressions (adding +0.0 / multiplying by 1.0 are exact).
     col_specs = []
     for col_idx, name, raw_name in active_columns:
-        cell_lower = raw_name.lower().strip()
+        cell_lower = _norm_header(raw_name)
         unit_lower = col_unit_map.get(raw_name, "")
         factor, offset = 1.0, 0.0
-        if cell_lower == "speed":
+        if cell_lower == "speed" and unit_lower in ("", "m/s"):
             factor = 3.6
         elif unit_lower == "mph":
             factor = 1.60934
@@ -234,7 +242,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
             factor, offset = 5.0 / 9.0, -32.0
         elif unit_lower == "bar" and "press" in name.lower():
             factor = 100.0
-        elif cell_lower in ("yaw_rate", "z_rate_of_rotation", "y_rate_of_rotation") and name == CH_YAW_RATE:
+        elif cell_lower in ("yaw rate", "z rate of rotation", "y rate of rotation") and name == CH_YAW_RATE:
             factor = -1.0
         col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
     col_decimals = [0] * len(col_specs)
@@ -331,7 +339,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
         line_clean = line.strip().strip('"').strip("'")
         try:
             parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_clean]))]
-        except Exception:
+        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
             parts = [p.strip().strip('"').strip("'") for p in line_clean.split(",")]
         if parts and parts[0].lower() == "beacon markers":
             for val in parts[1:]:

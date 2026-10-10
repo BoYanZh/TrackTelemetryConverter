@@ -35,7 +35,7 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):
             continue
         try:
             parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_clean]))]
-        except Exception:
+        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
             parts = [p.strip().strip('"').strip("'") for p in line_clean.split(",")]
         if len(parts) >= 3 and parts[0].lower() in ("time", "time (s)", "timestamp"):
             data_header_idx = i
@@ -52,7 +52,7 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):
             continue
         try:
             parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_s]))]
-        except Exception:
+        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
             parts = [p.strip().strip('"').strip("'") for p in line_s.split(",")]
         if len(parts) == 2:
             key, val = parts[0], parts[1]

@@ -93,7 +93,7 @@ def parse_gear_ratio_thresholds(value):
         thresholds = tuple(float(part.strip()) for part in value.split(","))
     except ValueError as exc:
         raise argparse.ArgumentTypeError("gear ratio thresholds must be comma-separated numbers") from exc
-    if len(thresholds) != 6 or any(a <= b for a, b in zip(thresholds, thresholds[1:])):
+    if len(thresholds) != 6 or any(a <= b for a, b in zip(thresholds, thresholds[1:], strict=False)):
         raise argparse.ArgumentTypeError(
             "gear ratio thresholds must contain six strictly descending values"
         )

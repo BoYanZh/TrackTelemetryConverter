@@ -151,14 +151,14 @@ def test_gear_derivation_mt_at_presets():
 
     # GR86/BRZ 6MT theoretical ratios classify 1-6 with the MT preset.
     for ratio, expected in zip(
-        (126, 76, 53.5, 42.1, 34.7, 26.6), (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)):
+        (126, 76, 53.5, 42.1, 34.7, 26.6), (1.0, 2.0, 3.0, 4.0, 5.0, 6.0), strict=False):
         assert gear_for(ratio, gearbox="mt") == [expected, expected]
     # Previously-misclassified MT mid-gear ratios (old default gave +1 gear).
     assert gear_for(41.5, gearbox="mt") == [4.0, 4.0]
     assert gear_for(51.5, gearbox="mt") == [3.0, 3.0]
     # GR86/BRZ 6AT theoretical ratios classify 1-6 with gearbox="at".
     for ratio, expected in zip(
-        (117, 68, 46.5, 33.1, 23.6, 19.2), (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)):
+        (117, 68, 46.5, 33.1, 23.6, 19.2), (1.0, 2.0, 3.0, 4.0, 5.0, 6.0), strict=False):
         assert gear_for(ratio, gearbox="at") == [expected, expected]
     # Explicit thresholds still override the preset.
     assert gear_for(41.5, gear_ratio_thresholds=(110, 70, 52, 42, 33, 20)) == [5.0, 5.0]

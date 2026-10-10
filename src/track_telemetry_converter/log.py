@@ -281,12 +281,16 @@ class DataLog:
             if not line_clean:
                 continue
 
-            # Check candump format: (1630268615.800257)
+            # Check candump format: (1630268615.800257). Epoch stamps denote
+            # an absolute instant: return them timezone-aware (UTC) so
+            # downstream snapshots stay identical on every machine.
             if line_clean.startswith("(") and ")" in line_clean:
                 try:
                     stamp = float(line_clean.split(")")[0][1:])
                     if stamp > 1e8:
-                        return datetime.datetime.fromtimestamp(stamp)
+                        return datetime.datetime.fromtimestamp(
+                            stamp, tz=datetime.timezone.utc
+                        )
                 except ValueError:
                     pass
 
@@ -307,7 +311,9 @@ class DataLog:
                 try:
                     stamp = float(parts[0])
                     if stamp > 1e8:
-                        return datetime.datetime.fromtimestamp(stamp)
+                        return datetime.datetime.fromtimestamp(
+                            stamp, tz=datetime.timezone.utc
+                        )
                 except ValueError:
                     pass
 

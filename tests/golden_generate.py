@@ -3,19 +3,13 @@
 Run BEFORE refactoring to snapshot reference outputs, then run golden_verify.py
 AFTER refactoring to confirm behavior is unchanged.
 
-Snapshots encode Pacific wall-clock times (fixture tracks are Californian),
-so generate and verify under America/Los_Angeles (CI pins this for you).
+Golden datetimes are timezone-stable by construction: epoch-derived instants
+are stored timezone-aware (UTC), wall-clock text is compared literally.
 """
-import datetime
 import json
 import os
 
 from track_telemetry_converter.log import DataLog
-
-print(
-    f"Local UTC offset: {datetime.datetime.now().astimezone().utcoffset()} "
-    "(expect America/Los_Angeles for stable goldens)"
-)
 
 EXAMPLES = os.path.join(os.path.dirname(__file__), "fixtures")
 OUT_DIR = os.path.join(os.path.dirname(__file__), "golden")

@@ -142,7 +142,7 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
             lap_starts = [v for v in laps.column("start_time").to_pylist() if v is not None]
             if lap_starts:
                 origins_ms.append(float(min(lap_starts)))
-        except (KeyError, ValueError, TypeError):
+        except Exception:
             pass
     global_t0_ms = min(origins_ms) if origins_ms else 0.0
     aliases_casefold = {str(key).strip().casefold(): value for key, value in CHANNEL_ALIASES.items()}
@@ -166,8 +166,11 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
         except Exception:
             meta_obj = None
 
-        timecodes_ms = np.asarray(table.column("timecodes").to_numpy(), dtype=np.float64)
-        values = np.asarray(table.column(ch_name).to_numpy(zero_copy_only=False), dtype=np.float64)
+        try:
+            timecodes_ms = np.asarray(table.column("timecodes").to_numpy(), dtype=np.float64)
+            values = np.asarray(table.column(ch_name).to_numpy(zero_copy_only=False), dtype=np.float64)
+        except (KeyError, ValueError, TypeError):
+            continue
         valid = np.isfinite(timecodes_ms) & np.isfinite(values)
         if not np.any(valid):
             continue
@@ -194,7 +197,7 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
             starts_ms = laps.column("start_time").to_pylist()
             ends_ms = laps.column("end_time").to_pylist()
             beacons = []
-            for n, s, e in zip(lap_nums, starts_ms, ends_ms):
+            for n, s, e in zip(lap_nums, starts_ms, ends_ms, strict=False):
                 if s is None or e is None:
                     continue
                 start_s = (float(s) - global_t0_ms) / 1000.0

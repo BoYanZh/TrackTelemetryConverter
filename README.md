@@ -25,9 +25,7 @@ never used as an output target.
 
 ## Install
 
-Python 3.8 through 3.14 is supported. AIM XRK/XRZ import requires Python 3.10
-or newer because `libxrk` does not publish Python 3.8/3.9 builds; all other
-input formats remain available on Python 3.8/3.9.
+Python 3.10 through 3.14 is supported.
 
 ```bash
 python -m pip install .

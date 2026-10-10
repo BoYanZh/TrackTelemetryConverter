@@ -59,10 +59,9 @@ def test_csv_export_uses_timestamp_union_and_handles_empty_channels():
         os.remove(tmp_path)
 
 
-def test_xml_indent_fallback_for_python_38(monkeypatch):
+def test_xml_indent():
     root = ET.Element("root")
     ET.SubElement(root, "child").text = "value"
-    monkeypatch.delattr(ET, "indent", raising=False)
 
     indent_xml(root, space="  ")
 

@@ -7,7 +7,7 @@ name = "track-telemetry-converter"
 dynamic = ["version"]
 description = "Convert motorsports telemetry logs to MoTeC LD/LDX files."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
   { name = "BoYanZh" },
@@ -19,12 +19,12 @@ dependencies = [
 [project.optional-dependencies]
 can = ["cantools>=39"]
 fit = ["fitparse>=1.2"]
-xrk = ["libxrk>=0.13; python_version >= '3.10'"]
+xrk = ["libxrk>=0.13"]
 dlap = ["pycryptodome>=3.18"]
 dev = [
   "cantools>=39",
   "fitparse>=1.2",
-  "libxrk>=0.13; python_version >= '3.10'",
+  "libxrk>=0.13",
   "pycryptodome>=3.18",
   "pytest>=8",
   "pytest-cov>=4",
@@ -55,7 +55,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py38"
+target-version = "py310"
 exclude = [
   "src/track_telemetry_converter/_vendor",
   "build",
@@ -70,4 +70,6 @@ ignore = ["E501"]
 # Vendored third-party binary-format reader ships without type
 # annotations; analyze it as an untyped dependency instead.
 exclude = ["src/track_telemetry_converter/_vendor"]
+# Check against the oldest supported runtime so newer syntax is caught.
+pythonVersion = "3.10"
 

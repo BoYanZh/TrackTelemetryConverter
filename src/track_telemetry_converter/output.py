@@ -37,7 +37,7 @@ def verify_motec_pair(ld_path, ldx_path, expected_channels):
             f"found {len(parsed.channs)}"
         )
 
-    for expected, actual in zip(expected_channels, parsed.channs):
+    for expected, actual in zip(expected_channels, parsed.channs, strict=False):
         if actual.name.strip() != expected.name.strip():
             raise RuntimeError(
                 f"MoTeC verification failed: channel {expected.name!r} read back as "

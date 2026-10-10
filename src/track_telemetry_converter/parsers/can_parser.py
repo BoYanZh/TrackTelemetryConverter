@@ -47,7 +47,7 @@ def parse_can_log(data_log, log_lines, can_db):
         db_msg = can_db.get_message_by_frame_id(id)
         msg_decoded = can_db.decode_message(id, data)
 
-        for msg, signal in zip(msg_decoded.items(), db_msg.signals):
+        for msg, signal in zip(msg_decoded.items(), db_msg.signals, strict=False):
             name = msg[0]
             value = msg[1]
 
