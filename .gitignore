@@ -11,3 +11,8 @@ dist/
 
 /tmp
 /data
+
+# Coverage data
+.coverage
+coverage.xml
+htmlcov/
