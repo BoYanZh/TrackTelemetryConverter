@@ -285,7 +285,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
             lap_info["end_time"] = t
             lap_info["messages_count"] += 1
 
-        for k, (val_idx, channel, factor, offset) in enumerate(col_specs):
+        for k, (val_idx, _, factor, offset) in enumerate(col_specs):
             if val_idx >= n_vals:
                 continue
 

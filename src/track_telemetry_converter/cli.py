@@ -264,7 +264,7 @@ def process_one_file(args, stint_override=None, output_override=None,
         sys.exit(1)
 
     print("Parsed %.1fs log with %s channels:" % (data_log.duration(), len(data_log.channels)))
-    for channel_name, channel in data_log.channels.items():
+    for channel in data_log.channels.values():
         print("\t%s" % channel)
 
     resample_freq = data_log.resample(args.frequency, mask_interp_gaps=args.mask_interp_gaps)
@@ -339,10 +339,10 @@ def process_one_file(args, stint_override=None, output_override=None,
         atomic_write_motec_pair(motec_log, data_log, ld_filename, ldx_filename)
         print("Saved .ld file: %s" % ld_filename)
         print("Saved .ldx file: %s" % ldx_filename)
-    except PermissionError:
+    except PermissionError as exc:
         raise PermissionError(
             "output is locked; close the file in MoTeC i2 and retry: %s" % ld_filename
-        )
+        ) from exc
 
     if args.gpx:
         gpx_filename = os.path.splitext(ld_filename)[0] + ".gpx"

@@ -17,6 +17,20 @@ jobs:
       - name: Lint with ruff
         run: ruff check src tests
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install package with dev extras and pyright
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install pyright
+      - name: Typecheck with pyright
+        run: python -m pyright src tests
+
   test:
     strategy:
       fail-fast: false
@@ -39,6 +53,8 @@ jobs:
           python -m track_telemetry_converter --help
       - name: Run tests
         run: python -m pytest -q
+      - name: Verify golden snapshots
+        run: python tests/golden_verify.py
       - name: Build wheel
         run: python -m pip wheel --no-deps --wheel-dir dist .
       - name: Compile Python sources

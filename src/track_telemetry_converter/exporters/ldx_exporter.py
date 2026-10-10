@@ -65,7 +65,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
         else:
             lap_beacons = detected_lap_beacons
 
-    for idx, (b_time, b_name) in enumerate(lap_beacons):
+    for b_time, _ in lap_beacons:
         t_us = b_time * 1e6
         ET.SubElement(beacon_group, "Marker", {
             "Version": "100",
@@ -77,7 +77,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
 
     if split_beacons:
         section_group = ET.SubElement(marker_block, "MarkerGroup", {"Name": "Sections", "Index": "4"})
-        for idx, (b_time, b_name) in enumerate(split_beacons):
+        for b_time, b_name in split_beacons:
             t_us = b_time * 1e6
             ET.SubElement(section_group, "Marker", {
                 "Version": "100",

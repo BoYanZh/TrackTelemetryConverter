@@ -78,7 +78,7 @@ class DataLog(object):
     def start(self):
         """ Returns the earliest timestamp from all existing channels [s]. """
         t = math.inf
-        for name, channel in self.channels.items():
+        for channel in self.channels.values():
             t = min(t, channel.start())
 
         return t if t != math.inf else 0.0
@@ -86,7 +86,7 @@ class DataLog(object):
     def end(self):
         """ Returns the latest timestamp from all existing channels [s]. """
         end = -math.inf
-        for name, channel in self.channels.items():
+        for channel in self.channels.values():
             end = max(end, channel.end())
 
         return end if end != -math.inf else 0.0
@@ -458,6 +458,6 @@ class DataLog(object):
 
     def __str__(self):
         output = "Log: %s, Duration: %f s" % (self.name, (self.end() - self.start()))
-        for channel_name, channel_data in self.channels.items():
+        for channel_data in self.channels.values():
             output += "\n\t%s" % channel_data
         return output
