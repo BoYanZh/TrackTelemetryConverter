@@ -235,6 +235,227 @@ def _init_rcz_timebase(data_log, timestamps_ms):
     return times_sec, n_samples, time_origin_epoch_ms
 
 
+
+
+def _resolve_rcz_gps(data_log, read_channel, namelist, n_samples):
+    """Identify the GPS sensor family and read speed values."""
+    gps_prefix = None
+    for candidate_prefix in _GPS_DEV_PFX:
+        if any(name.startswith(candidate_prefix) for name in namelist):
+            gps_prefix = candidate_prefix
+            break
+    gps_speed_values = None
+    if gps_prefix:
+        # Record which sensor family supplied GPS (e.g. rcz_gps_1_100),
+        # so a later session can tell at a glance which recording
+        # device was the source. NOTE: the number is not hardware-fixed
+        # (see comment above) -- identify the hardware by clock
+        # signature, not by this string.
+        _gps_parts = gps_prefix.split("_")
+        data_log.metadata["gps_source"] = f"rcz_gps_{_gps_parts[1]}_{_gps_parts[2]}"
+        speed_key = gps_prefix + "4_0"
+        if speed_key in namelist:
+            raw_speed = np.frombuffer(read_channel(speed_key), dtype="<i4")
+            if len(raw_speed) >= n_samples:
+                gps_speed_values = (raw_speed[:n_samples] / 1000.0) * 3.6
+    return gps_prefix, gps_speed_values
+
+def _reconstruct_rcz_laps(session_json, active_stint, times_sec, timestamps_ms, first_t, min_lap_sec, gps_speed_values, n_samples):
+    """Reconstruct Out/Timed/In laps overlapping the binary recording."""
+    # Map laps from session.json
+    laps_raw = session_json.get("laps", [])
+
+    # Group raw laps by stint
+    stints_map = {}
+    for lap in laps_raw:
+        st_id = int(lap.get("sessionResume", 0))
+        if st_id not in stints_map:
+            stints_map[st_id] = []
+        stints_map[st_id].append(lap)
+
+    stint_laps = stints_map.get(active_stint, [])
+
+    # Reconstruct clean lap structure for this stint by filtering laps that overlap with binary recording range
+    stint_duration_s = times_sec[-1] if len(times_sec) else 0.0
+    stint_start_ms = timestamps_ms[0] if len(timestamps_ms) else first_t
+    stint_end_ms = timestamps_ms[-1] if len(timestamps_ms) else (first_t + int(stint_duration_s * 1000))
+
+    # Filter raw laps that actually overlap with binary recording range
+    overlapping_laps = []
+    for lap in stint_laps:
+        s_ms = lap.get("startTimestamp")
+        f_ms = lap.get("finishTimestamp")
+        if not s_ms:
+            continue
+        cmp_end = f_ms if f_ms is not None else stint_end_ms
+        if s_ms < stint_end_ms and cmp_end > stint_start_ms:
+            overlapping_laps.append(lap)
+
+    reconstructed_laps = []
+
+    # 1. Out Lap (if leading non-timed padding exceeds the configured minimum)
+    first_timed_s = (overlapping_laps[0].get("startTimestamp") - stint_start_ms) / 1000.0 if overlapping_laps else 0.0
+    if first_timed_s > min_lap_sec:
+        out_lap_type = "Out Lap"
+        if (
+            gps_speed_values is not None
+            and len(gps_speed_values) > 0
+            and np.isfinite(gps_speed_values[0])
+            and gps_speed_values[0] >= _PARTIAL_OUT_LAP_SPEED_KMH
+        ):
+            out_lap_type = "Partial Out Lap"
+            print(
+                "WARNING: RCZ recording begins mid-lap at "
+                f"{gps_speed_values[0]:.1f} km/h; marking the leading segment "
+                "as Partial Out Lap",
+            )
+        reconstructed_laps.append({
+            "type": out_lap_type,
+            "lap_label": out_lap_type,
+            "lap_num": 1,
+            "start_time": 0.0,
+            "end_time": first_timed_s,
+            "duration": first_timed_s,
+            "stint": active_stint,
+        })
+
+    # 2. Timed Laps & In Lap inside recording window
+    for lap in overlapping_laps:
+        s_ms = lap.get("startTimestamp")
+        f_ms = lap.get("finishTimestamp")
+        orig_num = lap.get("number")
+
+        start_s = max(0.0, (s_ms - stint_start_ms) / 1000.0)
+
+        if f_ms is not None:
+            end_s = min(stint_duration_s, (f_ms - stint_start_ms) / 1000.0)
+            dur_s = end_s - start_s
+            if dur_s >= min_lap_sec:
+                reconstructed_laps.append({
+                    "type": "Timed",
+                    "lap_label": str(len(reconstructed_laps) + 1),
+                    "lap_num": len(reconstructed_laps) + 1,
+                    "start_time": start_s,
+                    "end_time": end_s,
+                    "duration": dur_s,
+                    "stint": active_stint,
+                    "orig_num": orig_num,
+                })
+        else:
+            end_s = stint_duration_s
+            dur_s = end_s - start_s
+            if dur_s >= min_lap_sec:
+                reconstructed_laps.append({
+                    "type": "In Lap",
+                    "lap_label": "In Lap",
+                    "lap_num": len(reconstructed_laps) + 1,
+                    "start_time": start_s,
+                    "end_time": end_s,
+                    "duration": dur_s,
+                    "stint": active_stint,
+                    "orig_num": orig_num,
+                })
+
+    # 3. Trailing In Lap check
+    if overlapping_laps and overlapping_laps[-1].get("finishTimestamp") is not None:
+        last_finish_ms = overlapping_laps[-1].get("finishTimestamp")
+        in_dur_s = (stint_end_ms - last_finish_ms) / 1000.0
+        if in_dur_s > min_lap_sec:
+            reconstructed_laps.append({
+                "type": "In Lap",
+                "lap_label": "In Lap",
+                "lap_num": len(reconstructed_laps) + 1,
+                "start_time": (last_finish_ms - stint_start_ms) / 1000.0,
+                "end_time": stint_duration_s,
+                "duration": in_dur_s,
+                "stint": active_stint,
+            })
+
+    # Build lap_numbers array for data logging
+    lap_numbers = np.ones(n_samples, dtype=int)
+    for r in reconstructed_laps:
+        m = (times_sec >= r["start_time"]) & (times_sec <= r["end_time"])
+        lap_numbers[m] = r["lap_num"]
+    return reconstructed_laps, lap_numbers, stint_duration_s
+
+def _select_rcz_target_lap(data_log, reconstructed_laps, lap_numbers, times_sec, timestamps_ms, n_samples, target_lap):
+    """Filter to one lap window; refresh the absolute origin for it."""
+    # Filter target_lap if specified
+    target_lap_int = None
+    if target_lap is not None and str(target_lap).lower() != "all":
+        try:
+            target_lap_int = int(target_lap)
+        except ValueError:
+            pass
+
+    selected_laps = reconstructed_laps
+    selected_time_origin = 0.0
+    if target_lap_int is not None:
+        matching_laps = [
+            lap for lap in reconstructed_laps if lap["lap_num"] == target_lap_int
+        ]
+        if matching_laps:
+            mask = (lap_numbers == target_lap_int)
+            selected_samples = times_sec[mask]
+            if len(selected_samples) > 0:
+                selected_time_origin = float(selected_samples[0])
+            selected_lap = dict(matching_laps[0])
+            selected_lap["start_time"] = 0.0
+            selected_lap["end_time"] = float(selected_lap["duration"])
+            selected_laps = [selected_lap]
+        else:
+            print(f"WARNING: Lap '{target_lap}' not found in RCZ stint; keeping all laps")
+            target_lap_int = None
+            mask = np.ones(n_samples, dtype=bool)
+    else:
+        mask = np.ones(n_samples, dtype=bool)
+
+    export_times_sec = times_sec - selected_time_origin
+    sample_times = export_times_sec[mask]
+    original_sample_times = times_sec[mask]
+    if len(original_sample_times) > 0 and len(timestamps_ms) > 0 and timestamps_ms[0] > 1e8:
+        actual_start_ms = timestamps_ms[0] + (original_sample_times[0] * 1000.0)
+        _set_absolute_origin(data_log, actual_start_ms)
+    data_log.rcz_metadata["timeOriginEpochMs"] = data_log.time_origin_epoch_ms
+    return selected_laps, mask, export_times_sec, sample_times, target_lap_int
+
+def _build_rcz_laps_info(data_log, selected_laps, target_lap_int, stint_duration_s):
+    """Store the lap summary for LDX export."""
+    # Store laps_info for ldx export
+    fastest_lap_num = 1
+    fastest_dur = float("inf")
+    for r in selected_laps:
+        if r["type"] == "Timed" and r["duration"] < fastest_dur:
+            fastest_dur = r["duration"]
+            fastest_lap_num = r["lap_num"]
+
+    data_log.laps_info = {
+        "laps": selected_laps,
+        "total_laps": len(selected_laps),
+        "fastest_lap": fastest_lap_num,
+        "fastest_time": fastest_dur if fastest_dur != float("inf") else 0.0,
+        "session_duration": (
+            float(selected_laps[0]["duration"])
+            if target_lap_int is not None and selected_laps
+            else stint_duration_s
+        ),
+    }
+
+def _read_rcz_entry(z, prefix, name):
+    """Read one prefix-relative entry from the RCZ archive."""
+    return z.read(prefix + name)
+
+def _populate_rcz_channel(data_log, n_samples, mask, sample_times, name, units, values_array, decimals=2):
+    """Append one resampled channel unless its values are too short."""
+    if len(values_array) < n_samples:
+        return
+    values_array = values_array[:n_samples]
+    filtered_vals = values_array[mask]
+    data_log.add_channel(name, units, float, decimals)
+    data_log.channels[name].decimals = decimals
+    data_log.channels[name].set_samples(sample_times, filtered_vals)
+
+
 def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  # noqa: C901 - legacy branchy parser; split when extending
                   min_lap_sec=15.0, mask_interp_gaps=False,
                   target_session=None):
@@ -284,214 +505,22 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
 
         # Resolve the GPS channels before reconstructing laps so a recording
         # that starts at speed can be identified as a partial out lap.
-        gps_prefix = None
-        for candidate_prefix in _GPS_DEV_PFX:
-            if any(name.startswith(candidate_prefix) for name in namelist):
-                gps_prefix = candidate_prefix
-                break
-        gps_speed_values = None
-        if gps_prefix:
-            # Record which sensor family supplied GPS (e.g. rcz_gps_1_100),
-            # so a later session can tell at a glance which recording
-            # device was the source. NOTE: the number is not hardware-fixed
-            # (see comment above) -- identify the hardware by clock
-            # signature, not by this string.
-            _gps_parts = gps_prefix.split("_")
-            data_log.metadata["gps_source"] = f"rcz_gps_{_gps_parts[1]}_{_gps_parts[2]}"
-            speed_key = gps_prefix + "4_0"
-            if speed_key in namelist:
-                raw_speed = np.frombuffer(read_channel(speed_key), dtype="<i4")
-                if len(raw_speed) >= n_samples:
-                    gps_speed_values = (raw_speed[:n_samples] / 1000.0) * 3.6
+        gps_prefix, gps_speed_values = _resolve_rcz_gps(data_log, read_channel, namelist, n_samples)
 
-        # Map laps from session.json
-        laps_raw = session_json.get("laps", [])
+        reconstructed_laps, lap_numbers, stint_duration_s = _reconstruct_rcz_laps(
+            session_json, active_stint, times_sec, timestamps_ms, first_t, min_lap_sec, gps_speed_values, n_samples
+        )
 
-        # Group raw laps by stint
-        stints_map = {}
-        for lap in laps_raw:
-            st_id = int(lap.get("sessionResume", 0))
-            if st_id not in stints_map:
-                stints_map[st_id] = []
-            stints_map[st_id].append(lap)
+        selected_laps, mask, export_times_sec, sample_times, target_lap_int = _select_rcz_target_lap(
+            data_log, reconstructed_laps, lap_numbers, times_sec, timestamps_ms, n_samples, target_lap
+        )
 
-        stint_laps = stints_map.get(active_stint, [])
-
-        # Reconstruct clean lap structure for this stint by filtering laps that overlap with binary recording range
-        stint_duration_s = times_sec[-1] if len(times_sec) else 0.0
-        stint_start_ms = timestamps_ms[0] if len(timestamps_ms) else first_t
-        stint_end_ms = timestamps_ms[-1] if len(timestamps_ms) else (first_t + int(stint_duration_s * 1000))
-
-        # Filter raw laps that actually overlap with binary recording range
-        overlapping_laps = []
-        for lap in stint_laps:
-            s_ms = lap.get("startTimestamp")
-            f_ms = lap.get("finishTimestamp")
-            if not s_ms:
-                continue
-            cmp_end = f_ms if f_ms is not None else stint_end_ms
-            if s_ms < stint_end_ms and cmp_end > stint_start_ms:
-                overlapping_laps.append(lap)
-
-        reconstructed_laps = []
-
-        # 1. Out Lap (if leading non-timed padding exceeds the configured minimum)
-        first_timed_s = (overlapping_laps[0].get("startTimestamp") - stint_start_ms) / 1000.0 if overlapping_laps else 0.0
-        if first_timed_s > min_lap_sec:
-            out_lap_type = "Out Lap"
-            if (
-                gps_speed_values is not None
-                and len(gps_speed_values) > 0
-                and np.isfinite(gps_speed_values[0])
-                and gps_speed_values[0] >= _PARTIAL_OUT_LAP_SPEED_KMH
-            ):
-                out_lap_type = "Partial Out Lap"
-                print(
-                    "WARNING: RCZ recording begins mid-lap at "
-                    f"{gps_speed_values[0]:.1f} km/h; marking the leading segment "
-                    "as Partial Out Lap",
-                )
-            reconstructed_laps.append({
-                "type": out_lap_type,
-                "lap_label": out_lap_type,
-                "lap_num": 1,
-                "start_time": 0.0,
-                "end_time": first_timed_s,
-                "duration": first_timed_s,
-                "stint": active_stint,
-            })
-
-        # 2. Timed Laps & In Lap inside recording window
-        for lap in overlapping_laps:
-            s_ms = lap.get("startTimestamp")
-            f_ms = lap.get("finishTimestamp")
-            orig_num = lap.get("number")
-
-            start_s = max(0.0, (s_ms - stint_start_ms) / 1000.0)
-
-            if f_ms is not None:
-                end_s = min(stint_duration_s, (f_ms - stint_start_ms) / 1000.0)
-                dur_s = end_s - start_s
-                if dur_s >= min_lap_sec:
-                    reconstructed_laps.append({
-                        "type": "Timed",
-                        "lap_label": str(len(reconstructed_laps) + 1),
-                        "lap_num": len(reconstructed_laps) + 1,
-                        "start_time": start_s,
-                        "end_time": end_s,
-                        "duration": dur_s,
-                        "stint": active_stint,
-                        "orig_num": orig_num,
-                    })
-            else:
-                end_s = stint_duration_s
-                dur_s = end_s - start_s
-                if dur_s >= min_lap_sec:
-                    reconstructed_laps.append({
-                        "type": "In Lap",
-                        "lap_label": "In Lap",
-                        "lap_num": len(reconstructed_laps) + 1,
-                        "start_time": start_s,
-                        "end_time": end_s,
-                        "duration": dur_s,
-                        "stint": active_stint,
-                        "orig_num": orig_num,
-                    })
-
-        # 3. Trailing In Lap check
-        if overlapping_laps and overlapping_laps[-1].get("finishTimestamp") is not None:
-            last_finish_ms = overlapping_laps[-1].get("finishTimestamp")
-            in_dur_s = (stint_end_ms - last_finish_ms) / 1000.0
-            if in_dur_s > min_lap_sec:
-                reconstructed_laps.append({
-                    "type": "In Lap",
-                    "lap_label": "In Lap",
-                    "lap_num": len(reconstructed_laps) + 1,
-                    "start_time": (last_finish_ms - stint_start_ms) / 1000.0,
-                    "end_time": stint_duration_s,
-                    "duration": in_dur_s,
-                    "stint": active_stint,
-                })
-
-        # Build lap_numbers array for data logging
-        lap_numbers = np.ones(n_samples, dtype=int)
-        for r in reconstructed_laps:
-            m = (times_sec >= r["start_time"]) & (times_sec <= r["end_time"])
-            lap_numbers[m] = r["lap_num"]
-
-        # Filter target_lap if specified
-        target_lap_int = None
-        if target_lap is not None and str(target_lap).lower() != "all":
-            try:
-                target_lap_int = int(target_lap)
-            except ValueError:
-                pass
-
-        selected_laps = reconstructed_laps
-        selected_time_origin = 0.0
-        if target_lap_int is not None:
-            matching_laps = [
-                lap for lap in reconstructed_laps if lap["lap_num"] == target_lap_int
-            ]
-            if matching_laps:
-                mask = (lap_numbers == target_lap_int)
-                selected_samples = times_sec[mask]
-                if len(selected_samples) > 0:
-                    selected_time_origin = float(selected_samples[0])
-                selected_lap = dict(matching_laps[0])
-                selected_lap["start_time"] = 0.0
-                selected_lap["end_time"] = float(selected_lap["duration"])
-                selected_laps = [selected_lap]
-            else:
-                print(f"WARNING: Lap '{target_lap}' not found in RCZ stint; keeping all laps")
-                target_lap_int = None
-                mask = np.ones(n_samples, dtype=bool)
-        else:
-            mask = np.ones(n_samples, dtype=bool)
-
-        export_times_sec = times_sec - selected_time_origin
-        sample_times = export_times_sec[mask]
-        original_sample_times = times_sec[mask]
-        if len(original_sample_times) > 0 and len(timestamps_ms) > 0 and timestamps_ms[0] > 1e8:
-            actual_start_ms = timestamps_ms[0] + (original_sample_times[0] * 1000.0)
-            _set_absolute_origin(data_log, actual_start_ms)
-        data_log.rcz_metadata["timeOriginEpochMs"] = data_log.time_origin_epoch_ms
-
-        # Store laps_info for ldx export
-        fastest_lap_num = 1
-        fastest_dur = float("inf")
-        for r in selected_laps:
-            if r["type"] == "Timed" and r["duration"] < fastest_dur:
-                fastest_dur = r["duration"]
-                fastest_lap_num = r["lap_num"]
-
-        data_log.laps_info = {
-            "laps": selected_laps,
-            "total_laps": len(selected_laps),
-            "fastest_lap": fastest_lap_num,
-            "fastest_time": fastest_dur if fastest_dur != float("inf") else 0.0,
-            "session_duration": (
-                float(selected_laps[0]["duration"])
-                if target_lap_int is not None and selected_laps
-                else stint_duration_s
-            ),
-        }
-
-        # Helper to add channel messages
-        def populate_channel(name, units, values_array, decimals=2):
-            if len(values_array) < n_samples:
-                return
-            values_array = values_array[:n_samples]
-            filtered_vals = values_array[mask]
-            data_log.add_channel(name, units, float, decimals)
-            data_log.channels[name].decimals = decimals
-            data_log.channels[name].set_samples(sample_times, filtered_vals)
-
+        _build_rcz_laps_info(data_log, selected_laps, target_lap_int, stint_duration_s)
+        populate_channel = functools.partial(_populate_rcz_channel, data_log, n_samples, mask, sample_times)
         # Lap Number Channel
         populate_channel(CH_LAP_NUMBER, "", lap_numbers, 0)
         # Running Time Channel
         populate_channel(CH_RUNNING_TIME, "s", export_times_sec, 2)
-
         if gps_prefix:
             # 2. Parse Speed
             if gps_speed_values is not None:
