@@ -441,10 +441,6 @@ def _build_rcz_laps_info(data_log, selected_laps, target_lap_int, stint_duration
         ),
     }
 
-def _read_rcz_entry(z, prefix, name):
-    """Read one prefix-relative entry from the RCZ archive."""
-    return z.read(prefix + name)
-
 def _populate_rcz_channel(data_log, n_samples, mask, sample_times, name, units, values_array, decimals=2):
     """Append one resampled channel unless its values are too short."""
     if len(values_array) < n_samples:
@@ -466,7 +462,6 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
     target_session: Nested session directory ID in a RaceChrono backup, or None.
     """
     import functools
-    import json
     import os
     import zipfile
 
@@ -508,11 +503,11 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         gps_prefix, gps_speed_values = _resolve_rcz_gps(data_log, read_channel, namelist, n_samples)
 
         reconstructed_laps, lap_numbers, stint_duration_s = _reconstruct_rcz_laps(
-            session_json, active_stint, times_sec, timestamps_ms, first_t, min_lap_sec, gps_speed_values, n_samples
+            session_json, active_stint, times_sec, timestamps_ms, first_t, min_lap_sec, gps_speed_values, n_samples,
         )
 
         selected_laps, mask, export_times_sec, sample_times, target_lap_int = _select_rcz_target_lap(
-            data_log, reconstructed_laps, lap_numbers, times_sec, timestamps_ms, n_samples, target_lap
+            data_log, reconstructed_laps, lap_numbers, times_sec, timestamps_ms, n_samples, target_lap,
         )
 
         _build_rcz_laps_info(data_log, selected_laps, target_lap_int, stint_duration_s)
