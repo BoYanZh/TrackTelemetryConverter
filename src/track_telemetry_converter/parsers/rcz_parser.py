@@ -29,6 +29,30 @@ _PARTIAL_OUT_LAP_SPEED_KMH = 5.0
 _MIN_EPOCH_MS = 100_000_000_000
 _EPOCH_REFERENCE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
+# RCZ binary channel naming conventions (RaceChrono internal format).
+# GPS + accel + gyro families always travel together per recording
+# device (e.g. 1/100 + 2/101 + 3/102, or 1/200 + 2/201 + 3/202).
+# The numbers are NOT hardware-fixed: the same physical receiver can
+# show up under different numbers on different phones/pairings (one
+# 2026-09 weekend logged 200 on one phone and 100 on another at the
+# same track), and one session (2026-03-07) logged GPS from 300 while
+# phone IMU rode along as 2_100/3_101 at its native 66/50 Hz.
+# Identify the source by its clock signature instead: an external
+# 25 Hz receiver (e.g. RaceBox) streams GPS+IMU on a single clock
+# (rateRatio 1.0000000, 0.0 ms drift over a full session), while
+# phone IMU keeps its own native rate.
+#   4/101 = phone IMU / secondary OBD
+#   12/* = primary OBD (car ECU via CAN)
+_GPS_DEV_PFX = tuple(
+    f"channel_1_{device_type}_0_"
+    for device_type in ("300", "200", "100")
+)
+_GPS_TS_KEYS = tuple(
+    f"channel_1_{device_type}_0_1_1"
+    for device_type in ("300", "200", "100")
+)
+_OBD_DEV4_TS_KEY = "channel_4_101_0_1_1"
+
 
 def _decode_epoch_ms(data, reference_ms=None):
     """Return a monotonic int64 Unix-ms stream, or None if implausible."""
@@ -177,6 +201,40 @@ def _select_rcz_stint(target_stint):
         return 0
 
 
+
+
+def _resolve_rcz_clock(read_channel, namelist, epoch_reference):
+    """Resolve the GPS timestamp channel; return (time_file, timestamps_ms)."""
+    time_file = None
+    timestamps_ms = None
+    for candidate in _GPS_TS_KEYS:
+        if candidate in namelist:
+            decoded = _decode_epoch_ms(read_channel(candidate), epoch_reference)
+            if decoded is not None:
+                time_file = candidate
+                timestamps_ms = decoded
+                break
+
+    if not time_file:
+        for name in namelist:
+            if name.startswith("channel_") and name.endswith("_1_1"):
+                decoded = _decode_epoch_ms(read_channel(name), epoch_reference)
+                if decoded is not None:
+                    time_file = name
+                    timestamps_ms = decoded
+                    break
+
+    return time_file, timestamps_ms
+
+def _init_rcz_timebase(data_log, timestamps_ms):
+    """Set the absolute origin; return (times_sec, n_samples, time_origin_epoch_ms)."""
+    time_origin_epoch_ms = int(timestamps_ms[0])
+    _set_absolute_origin(data_log, time_origin_epoch_ms)
+    times_sec = _relative_epoch_seconds(timestamps_ms, time_origin_epoch_ms)
+    n_samples = len(times_sec)
+    return times_sec, n_samples, time_origin_epoch_ms
+
+
 def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  # noqa: C901 - legacy branchy parser; split when extending
                   min_lap_sec=15.0, mask_interp_gaps=False,
                   target_session=None):
@@ -206,29 +264,6 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         all_names = z.namelist()
         prefix, session_prefix, namelist = _resolve_rcz_prefix(z, target_session, target_stint)
         read_channel = functools.partial(_read_rcz_entry, z, prefix)
-        # RCZ binary channel naming conventions (RaceChrono internal format).
-        # GPS + accel + gyro families always travel together per recording
-        # device (e.g. 1/100 + 2/101 + 3/102, or 1/200 + 2/201 + 3/202).
-        # The numbers are NOT hardware-fixed: the same physical receiver can
-        # show up under different numbers on different phones/pairings (one
-        # 2026-09 weekend logged 200 on one phone and 100 on another at the
-        # same track), and one session (2026-03-07) logged GPS from 300 while
-        # phone IMU rode along as 2_100/3_101 at its native 66/50 Hz.
-        # Identify the source by its clock signature instead: an external
-        # 25 Hz receiver (e.g. RaceBox) streams GPS+IMU on a single clock
-        # (rateRatio 1.0000000, 0.0 ms drift over a full session), while
-        # phone IMU keeps its own native rate.
-        #   4/101 = phone IMU / secondary OBD
-        #   12/* = primary OBD (car ECU via CAN)
-        _gps_dev_pfx = tuple(
-            f"channel_1_{device_type}_0_"
-            for device_type in ("300", "200", "100")
-        )
-        _gps_ts_keys = tuple(
-            f"channel_1_{device_type}_0_1_1"
-            for device_type in ("300", "200", "100")
-        )
-        _obd_dev4_ts_key  = "channel_4_101_0_1_1"
 
         session_data = _load_rcz_session(z, all_names, session_prefix)
         if session_data is None:
@@ -239,39 +274,18 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         _apply_rcz_session_meta(data_log, session_json, rcz_file_path)
 
         active_stint = _select_rcz_stint(target_stint)
-        time_file = None
-        timestamps_ms = None
         epoch_reference = session_json.get("firstTimestamp") or session_json.get("timeCreated")
-        for candidate in _gps_ts_keys:
-            if candidate in namelist:
-                decoded = _decode_epoch_ms(read_channel(candidate), epoch_reference)
-                if decoded is not None:
-                    time_file = candidate
-                    timestamps_ms = decoded
-                    break
-
-        if not time_file:
-            for name in namelist:
-                if name.startswith("channel_") and name.endswith("_1_1"):
-                    decoded = _decode_epoch_ms(read_channel(name), epoch_reference)
-                    if decoded is not None:
-                        time_file = name
-                        timestamps_ms = decoded
-                        break
-
+        time_file, timestamps_ms = _resolve_rcz_clock(read_channel, namelist, epoch_reference)
         if not time_file or timestamps_ms is None:
             print("ERROR: Could not find timestamp channel in RCZ file")
             return
 
-        time_origin_epoch_ms = int(timestamps_ms[0])
-        _set_absolute_origin(data_log, time_origin_epoch_ms)
-        times_sec = _relative_epoch_seconds(timestamps_ms, time_origin_epoch_ms)
-        n_samples = len(times_sec)
+        times_sec, n_samples, time_origin_epoch_ms = _init_rcz_timebase(data_log, timestamps_ms)
 
         # Resolve the GPS channels before reconstructing laps so a recording
         # that starts at speed can be identified as a partial out lap.
         gps_prefix = None
-        for candidate_prefix in _gps_dev_pfx:
+        for candidate_prefix in _GPS_DEV_PFX:
             if any(name.startswith(candidate_prefix) for name in namelist):
                 gps_prefix = candidate_prefix
                 break
@@ -659,13 +673,13 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
             # PID 8 on device 4 = phone vertical accelerometer (m/s^2, includes gravity) - skip
             "8":  None,
         }
-        dev4_ts_key = _obd_dev4_ts_key
+        dev4_ts_key = _OBD_DEV4_TS_KEY
         dir_prefix = os.path.dirname(dev4_ts_key)
         if any(os.path.basename(n) == os.path.basename(dev4_ts_key) and
                os.path.dirname(n) == dir_prefix for n in namelist):
             actual_key = next(
                 n for n in namelist
-                if os.path.basename(n) == os.path.basename(_obd_dev4_ts_key)
+                if os.path.basename(n) == os.path.basename(_OBD_DEV4_TS_KEY)
             )
             obd4_epoch_ms = _decode_epoch_ms(read_channel(actual_key), time_origin_epoch_ms)
             if obd4_epoch_ms is not None:
