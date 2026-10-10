@@ -308,7 +308,7 @@ def process_one_file(args, stint_override=None, output_override=None,
     )
 
     motec_log = MotecLog()
-    if getattr(data_log, "datetime", None):
+    if data_log.datetime is not None:
         motec_log.datetime = data_log.datetime
     motec_log.driver = driver_name
     motec_log.vehicle_id = vehicle_name
@@ -724,7 +724,7 @@ def _convert_single_input(args):
             print("ERROR: --session is only valid for a multi-session RCZ backup")
             return 1
 
-    if args.log_type == "CAN" and not os.path.isfile(args.dbc):
+    if args.log_type == "CAN" and not (args.dbc and os.path.isfile(args.dbc)):
         print("ERROR: DBC file %s does not exist" % args.dbc)
         return 1
 

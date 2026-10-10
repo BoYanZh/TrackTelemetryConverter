@@ -104,7 +104,7 @@ def test_gear_preserved_after_resample():
     for i in range(n):
         gear = 2 if i < n // 3 else (3 if i < 2 * n // 3 else 4)
         log.channels["Gear"].messages.append(
-            type("M", (), {"timestamp": float(i) * 0.05, "value": float(gear)})()
+            Message(float(i) * 0.05, float(gear))
         )
     log.resample(20)
     for m in log.channels["Gear"].messages:

@@ -230,7 +230,7 @@
    },
    "datetime": null,
    "duration": 1352.76,
-   "laps_info": null,
+   "laps_info": {},
    "metadata": {},
    "traps": []
   },
@@ -464,7 +464,7 @@
    },
    "datetime": null,
    "duration": 1352.6315789473683,
-   "laps_info": null,
+   "laps_info": {},
    "metadata": {},
    "traps": []
   }
@@ -955,7 +955,7 @@
    },
    "datetime": null,
    "duration": 1352.76,
-   "laps_info": null,
+   "laps_info": {},
    "metadata": {},
    "traps": []
   },
@@ -1099,7 +1099,7 @@
    },
    "datetime": null,
    "duration": 1352.6315789473683,
-   "laps_info": null,
+   "laps_info": {},
    "metadata": {},
    "traps": []
   }

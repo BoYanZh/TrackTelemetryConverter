@@ -16,5 +16,6 @@ def test_vbo_smoke():
     assert "GPS Longitude" in log.channels
     assert "CG Accel Lateral" in log.channels
     assert "CG Accel Longitudinal" in log.channels
+    assert log.datetime is not None
     assert log.datetime.strftime("%Y-%m-%d") == "2026-01-01"
     assert log.duration() > 0

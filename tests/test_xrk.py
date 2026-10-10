@@ -36,4 +36,5 @@ def test_xrk_units_time_origin_and_datetime():
     assert abs(gps.end() - rpm.end()) < 0.2, "GPS and logger clocks must stay aligned"
     assert np.all(np.isfinite(gps.timestamps))
     assert np.all(np.diff(gps.timestamps) > 0), "XRK timestamps must be unique and monotonic"
+    assert log.datetime is not None
     assert log.datetime.strftime("%Y-%m-%d %H:%M:%S") == "2016-01-23 12:09:04"

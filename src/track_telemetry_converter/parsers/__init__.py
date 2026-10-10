@@ -1,6 +1,7 @@
 """Input format parsers and registry for TrackTelemetryConverter."""
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 
@@ -41,6 +42,8 @@ def auto_detect_log_type(file_path: str) -> str:
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             sample = f.read(2048)
+        if re.search(r"^\(\d+\.\d+\)\s+\S+\s+[0-9A-Fa-f]+#", sample, re.MULTILINE):
+            return "CAN"
         if path_lower.endswith(".vbo") or "[header]" in sample or "[column names]" in sample:
             return "VBO"
         if "RaceChrono" in sample or "RaceStudio" in sample or "Solo" in sample or "GPS_LatAcc" in sample:
@@ -49,7 +52,7 @@ def auto_detect_log_type(file_path: str) -> str:
             return "PBBUDDY"
         if "Time,GPS Latitude" in sample:
             return "PBBUDDY"
-        if "Time," in sample and "RPM" in sample:
+        if "Time (sec)" in sample or "AP Info" in sample:
             return "ACCESSPORT"
     except Exception:
         pass

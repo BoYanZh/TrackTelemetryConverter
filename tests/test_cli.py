@@ -175,3 +175,15 @@ def test_csv_auxiliary_export_does_not_replace_source():
     assert _csv_output_path(os.path.join("logs", "session.ld"), source).endswith(
         "session_export.csv"
     )
+
+
+def test_auto_detect_log_types():
+    from track_telemetry_converter.parsers import auto_detect_log_type
+
+    assert auto_detect_log_type(os.path.join(EXAMPLES, "csv_sample.csv")) == "CSV"
+    assert (
+        auto_detect_log_type(os.path.join(EXAMPLES, "accessport_sample.csv"))
+        == "ACCESSPORT"
+    )
+    assert auto_detect_log_type(os.path.join(EXAMPLES, "can_sample.log")) == "CAN"
+    assert auto_detect_log_type(os.path.join(EXAMPLES, "vbo_sample.vbo")) == "VBO"

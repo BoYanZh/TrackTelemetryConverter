@@ -41,6 +41,7 @@ def test_aim_solo_smoke():
     assert "GPS Latitude" in log.channels
     assert "GPS Longitude" in log.channels
     assert log.metadata.get("venue_name") == "Laguna Seca"
+    assert log.datetime is not None
     assert log.datetime.strftime("%Y-%m-%d") == "2026-02-14"
     assert log.duration() > 0
 

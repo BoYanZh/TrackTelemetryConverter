@@ -54,7 +54,7 @@ class MotecLog(object):
         self.datetime = datetime.datetime.now()
 
         # File components from ldparser
-        self.ld_header = None
+        self.ld_header: ldHead | None = None
         self.ld_channels = []
 
     def initialize(self):
@@ -103,6 +103,7 @@ class MotecLog(object):
         n = len(self.ld_channels)
         if n == 0:
             return
+        assert self.ld_header is not None, "initialize() must be called before writing"
 
         meta_base = self.HEADER_PTR
         for i, ch in enumerate(self.ld_channels):
@@ -114,6 +115,7 @@ class MotecLog(object):
         self.ld_header.data_ptr = data_ptr
         for ch in self.ld_channels:
             ch.data_ptr = data_ptr
+            assert ch._data is not None, "channel data must be set before writing"
             data_ptr += ch._data.nbytes
 
         # Validate pointer layout integrity before serialization
@@ -127,6 +129,7 @@ class MotecLog(object):
 
     def write(self, filename):
         if not self.ld_channels:
+            assert self.ld_header is not None, "initialize() must be called before writing"
             with open(filename, "wb") as f:
                 self.ld_header.write(f, 0)
             return

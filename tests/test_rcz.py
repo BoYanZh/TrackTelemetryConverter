@@ -41,6 +41,7 @@ def test_rcz_preserves_canonical_absolute_time_origin():
 
         assert log.time_origin_epoch_ms == 1_700_000_000_000
         assert log.session_created_epoch_ms == 1_700_000_000_000
+        assert log.datetime_utc is not None
         assert log.datetime_utc.tzinfo == timezone.utc
         assert log.datetime_utc.timestamp() == 1_700_000_000.0
         assert log.rcz_metadata["timeOriginEpochMs"] == 1_700_000_000_000
@@ -501,7 +502,7 @@ def test_rcz_target_lap_rebases_time_and_lap_metadata():
         atomic_write_motec_pair(motec, log, ld_path, ldx_path)
         root = ET.parse(ldx_path).getroot()
         assert len(root.findall(".//Laps/Lap")) == 1
-        assert [float(marker.get("Time")) for marker in root.findall(".//Marker")] == [
+        assert [float(marker.get("Time", "0")) for marker in root.findall(".//Marker")] == [
             0.0,
             30_000_000.0,
         ]

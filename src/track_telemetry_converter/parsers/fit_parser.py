@@ -112,7 +112,10 @@ def parse_fit_log(data_log, fit_file_path, target_lap=None):
     # axis. Keeping duplicate timestamps would make derivative math divide by 0.
     records_by_time = {}
     for msg in fit.get_messages("record"):
-        fields = {f.name: f.value for f in msg.fields if f.value is not None}
+        raw_fields = getattr(msg, "fields", None)
+        if not raw_fields:
+            continue
+        fields = {f.name: f.value for f in raw_fields if f.value is not None}
         if not fields:
             continue
         ts = fields.get("timestamp")

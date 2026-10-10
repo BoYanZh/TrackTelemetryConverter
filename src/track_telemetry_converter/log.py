@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import math
+from typing import Any
 
 import numpy as np
 
@@ -47,13 +48,15 @@ class DataLog(object):
 
     def __init__(self, name=""):
         self.name = name
-        self.channels = {}
-        self.datetime = None
-        self.datetime_utc = None
-        self.time_origin_epoch_ms = None
-        self.session_created_epoch_ms = None
-        self.metadata = {}
-        self.traps = []
+        self.channels: dict[str, Channel] = {}
+        self.datetime: datetime.datetime | None = None
+        self.datetime_utc: datetime.datetime | None = None
+        self.time_origin_epoch_ms: int | None = None
+        self.session_created_epoch_ms: int | None = None
+        self.metadata: dict[str, Any] = {}
+        self.traps: list[dict[str, Any]] = []
+        self.laps_info: dict[str, Any] = {}
+        self.rcz_metadata: dict[str, Any] = {}
 
     def clear(self):
         self.channels = {}
@@ -63,6 +66,8 @@ class DataLog(object):
         self.session_created_epoch_ms = None
         self.metadata = {}
         self.traps = []
+        self.laps_info = {}
+        self.rcz_metadata = {}
 
     def add_channel(self, name, units, data_type, decimals, initial_message=None):
         if any(k in name.lower() for k in ["latitude", "longitude", "lat", "lon"]):
@@ -125,7 +130,7 @@ class DataLog(object):
 
         return max(1.0, round(raw_freq, 1))
 
-    def resample(self, frequency="auto", mask_interp_gaps=False):
+    def resample(self, frequency: float | int | str | None = "auto", mask_interp_gaps=False):
         """ Resamples all channels such that all messages occur at a fixed frequency.
 
         frequency: float, int, or 'auto' (detects native sample rate, e.g. 20Hz, 25Hz, 50Hz).

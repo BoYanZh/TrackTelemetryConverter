@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Sequence, overload
 
 import numpy as np
 
@@ -29,16 +29,24 @@ class MessageListProxy(Sequence[Message]):
     def __len__(self):
         return len(self._channel._timestamps)
 
+    @overload
+    def __getitem__(self, idx: int) -> Message:
+        ...
+
+    @overload
+    def __getitem__(self, idx: slice) -> list[Message]:
+        ...
+
     def __getitem__(self, idx):
         if isinstance(idx, slice):
             ts_sub = self._channel._timestamps[idx]
             val_sub = self._channel._values[idx]
-            return [Message(t, v) for t, v in zip(ts_sub, val_sub)]
-        return Message(self._channel._timestamps[idx], self._channel._values[idx])
+            return [Message(float(t), float(v)) for t, v in zip(ts_sub, val_sub)]
+        return Message(float(self._channel._timestamps[idx]), float(self._channel._values[idx]))
 
     def __iter__(self):
         for t, v in zip(self._channel._timestamps, self._channel._values):
-            yield Message(t, v)
+            yield Message(float(t), float(v))
 
     def __bool__(self):
         return len(self._channel._timestamps) > 0

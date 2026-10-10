@@ -65,3 +65,8 @@ exclude = [
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
+[tool.pyright]
+# Vendored third-party binary-format reader ships without type
+# annotations; analyze it as an untyped dependency instead.
+exclude = ["src/track_telemetry_converter/_vendor"]
+

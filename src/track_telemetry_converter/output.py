@@ -64,7 +64,7 @@ def verify_motec_pair(ld_path, ldx_path, expected_channels):
     if root.tag != "LDXFile":
         raise RuntimeError(f"LDX verification failed: unexpected root element {root.tag!r}")
     for marker_group in root.findall(".//MarkerGroup"):
-        times = [float(marker.get("Time")) for marker in marker_group.findall("Marker")]
+        times = [float(marker.get("Time", "0")) for marker in marker_group.findall("Marker")]
         if any(not math.isfinite(value) for value in times):
             raise RuntimeError("LDX verification failed: marker time is not finite")
         if times != sorted(times):

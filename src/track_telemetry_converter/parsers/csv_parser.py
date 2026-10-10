@@ -35,6 +35,16 @@ def parse_csv_log(data_log, log_lines):
     header = log_lines[data_header_idx].strip("\n")
     channel_names = [name.strip().strip('"').strip("'") for name in header.split(",")[1:]]
 
+    # MoTeC channel names are limited to 32 characters; longer header fields
+    # are file metadata (e.g. COBB "AP Info" trailers), not data channels.
+    kept_names = []
+    for name in channel_names:
+        if len(name) > 32:
+            print("WARNING: Ignoring over-long CSV column (file metadata, not data): %s..." % name[:48])
+            continue
+        kept_names.append(name)
+    channel_names = kept_names
+
     # We'll keep a map of names and column numbers for easy channel lookups when parsing rows
     i = 0
     channel_dict = {}
