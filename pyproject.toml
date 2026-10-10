@@ -20,10 +20,12 @@ dependencies = [
 can = ["cantools>=39"]
 fit = ["fitparse>=1.2"]
 xrk = ["libxrk>=0.13; python_version >= '3.10'"]
+dlap = ["pycryptodome>=3.18"]
 dev = [
   "cantools>=39",
   "fitparse>=1.2",
   "libxrk>=0.13; python_version >= '3.10'",
+  "pycryptodome>=3.18",
   "pytest>=8",
   "ruff>=0.5",
 ]

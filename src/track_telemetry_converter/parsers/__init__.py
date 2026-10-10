@@ -18,6 +18,7 @@ SUPPORTED_LOG_TYPES = (
     "RCZ",
     "PBBUDDY",
     "VBO",
+    "DLAP",
     "IBT",
     "XRK",
     "FIT",
@@ -35,6 +36,8 @@ def auto_detect_log_type(file_path: str) -> str:
         return "XRK"
     if path_lower.endswith(".fit"):
         return "FIT"
+    if path_lower.endswith(".dlap"):
+        return "DLAP"
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             sample = f.read(2048)

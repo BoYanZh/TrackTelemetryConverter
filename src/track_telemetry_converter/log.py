@@ -405,6 +405,10 @@ class DataLog(object):
         from .parsers.vbo_parser import parse_vbo_log
         parse_vbo_log(self, log_lines, target_lap=target_lap)
 
+    def from_dlap_log(self, dlap_file_path, target_lap=None):
+        from .parsers.dlap_parser import parse_dlap_log
+        parse_dlap_log(self, dlap_file_path, target_lap=target_lap)
+
     def from_pbbuddy_log(self, log_lines, target_lap=None):
         from .parsers.pbbuddy_parser import parse_pbbuddy_log
         parse_pbbuddy_log(self, log_lines, target_lap=target_lap)

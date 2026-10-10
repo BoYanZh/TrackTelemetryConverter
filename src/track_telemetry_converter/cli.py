@@ -75,6 +75,7 @@ _BATCH_TYPE_EXTENSIONS = {
     "XRK": (".xrk", ".xrz"),
     "FIT": (".fit",),
     "VBO": (".vbo",),
+    "DLAP": (".dlap",),
     "IBT": (".ibt",),
     "CAN": (".log", ".can", ".trc", ".asc"),
     "CSV": (".csv",),
@@ -114,6 +115,8 @@ def _output_paths(args, out_base):
         targets.append(os.path.splitext(ld_filename)[0] + ".kml")
     if getattr(args, "csv", False):
         targets.append(_csv_output_path(ld_filename, args.log))
+    if getattr(args, "vbo", False):
+        targets.append(_vbo_output_path(ld_filename, args.log))
     return ld_filename, ldx_filename, targets
 
 
@@ -124,6 +127,15 @@ def _csv_output_path(ld_filename, source_path):
     ):
         csv_filename = os.path.splitext(ld_filename)[0] + "_export.csv"
     return csv_filename
+
+
+def _vbo_output_path(ld_filename, source_path):
+    vbo_filename = os.path.splitext(ld_filename)[0] + ".vbo"
+    if os.path.normcase(os.path.abspath(vbo_filename)) == os.path.normcase(
+        os.path.abspath(source_path)
+    ):
+        vbo_filename = os.path.splitext(ld_filename)[0] + "_export.vbo"
+    return vbo_filename
 
 
 _auto_detect_log_type = auto_detect_log_type
@@ -228,6 +240,9 @@ def process_one_file(args, stint_override=None, output_override=None,
             lines = file.readlines()
         print("Extracting Racelogic VBO data...")
         data_log.from_vbo_log(lines, target_lap=args.lap)
+    elif active_type == "DLAP":
+        print("Extracting Dragy DLAP data...")
+        data_log.from_dlap_log(args.log, target_lap=args.lap)
     elif active_type == "RCZ":
         print("Extracting RCZ data directly...")
         data_log.from_rcz_log(args.log, target_lap=args.lap,
@@ -344,6 +359,11 @@ def process_one_file(args, stint_override=None, output_override=None,
         if motec_log.write_csv(csv_filename, data_log, wallclock=getattr(args, "csv_wallclock", False)):
             print("Saved .csv data file: %s" % csv_filename)
 
+    if getattr(args, "vbo", False):
+        vbo_filename = _vbo_output_path(ld_filename, args.log)
+        if motec_log.write_vbo(vbo_filename, data_log):
+            print("Saved .vbo track file: %s" % vbo_filename)
+
     print("Done!")
     return output_targets
 
@@ -355,7 +375,7 @@ def build_parser():
     parser = argparse.ArgumentParser(description=DESCRIPTION, epilog=EPILOG)
     parser.add_argument("log", type=str, help="Path to logfile, or to a directory for batch conversion")
     parser.add_argument("log_type", type=str, help="Type of log to process (use AUTO with a directory to detect each file's format)",
-                        choices=["CAN", "CSV", "ACCESSPORT", "RACECHRONO", "RCZ", "PBBUDDY", "VBO", "IBT", "XRK", "FIT", "AUTO"])
+                        choices=["CAN", "CSV", "ACCESSPORT", "RACECHRONO", "RCZ", "PBBUDDY", "VBO", "DLAP", "IBT", "XRK", "FIT", "AUTO"])
     parser.add_argument("--recursive", action="store_true",
                         help="Recurse into subdirectories in batch directory mode")
 
@@ -380,6 +400,7 @@ def build_parser():
     parser.add_argument("--gpx", action="store_true", help="Also generate GPX track file")
     parser.add_argument("--kml", action="store_true", help="Also generate KML Google Earth track file")
     parser.add_argument("--csv", action="store_true", help="Also generate CSV data file (RaceStudio / Excel import)")
+    parser.add_argument("--vbo", action="store_true", help="Also generate VBO data file (Circuit Tools / GPS analysis import)")
     parser.add_argument("--csv-wallclock", action="store_true", default=False, dest="csv_wallclock",
                         help="Write wall-clock timestamps in CSV instead of elapsed seconds")
     parser.add_argument("--dbc", type=str, help="Path to DBC file, required if log type CAN")
@@ -513,7 +534,7 @@ def _batch_convert(args):
     """Convert every recognized log in a directory, detecting each file's format.
 
     With AUTO (recommended), each file's type is detected individually, so RCZ,
-    CSV, VBO, IBT, XRK, and FIT inputs can be mixed in one run. Outputs are
+    CSV, VBO, DLAP, IBT, XRK, and FIT inputs can be mixed in one run. Outputs are
     written next to each input; existing outputs are skipped unless --force is
     given. Returns exit code (0 unless at least one file failed).
     """

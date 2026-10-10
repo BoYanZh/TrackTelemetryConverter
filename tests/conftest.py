@@ -184,6 +184,85 @@ def _write_lapped_rcz(path, start_speed_mps=0.0):
         archive.writestr("channel_1_300_0_3_1", lat_lon.astype("<i4").tobytes())
 
 
+def _write_minimal_dlap(path, n_rows=240, freq=25.0):
+    """Write a tiny Dragy-style .dlap archive (outer ZIP + AES .group).
+
+    Builds an inner ZIP with a `loopdata_*.txt` GPS CSV (two laps), a
+    session JSON with lap row ranges, and an `*.obd` file, then encrypts it
+    with the same AES-128-CBC key/IV Dragy's frontend uses.
+    """
+    import zipfile
+
+    AES = _import_or_skip("Crypto.Cipher.AES")
+
+    dt = 1.0 / freq
+    lines = []
+    for i in range(n_rows):
+        lap_row = i if i < n_rows // 2 else i - n_rows // 2
+        user_time = lap_row * dt
+        dev_sow = 602_837.0 + i * dt
+        speed = 50.0 + 30.0 * (i / n_rows)
+        alt = 85.0
+        lat = 39.54 + i * 1e-7
+        lon = -122.33 + i * 1e-7
+        dist = i * 0.7
+        brake = 1 if 40 <= i < 60 else 0
+        epoch = 1_791_070_019.0 + i * dt
+        row = [
+            f"{user_time:.3f}", f"{dev_sow:.2f}", f"{speed:.3f}", "0.100",
+            f"{alt:.1f}", f"{lat:.6f}", f"{lon:.6f}", f"{dist:.2f}",
+            "2.0", "12", "90.00", str(brake),
+            "0.000", "0.000", "0.000", str(i), "",
+            "0.000", "3", "0.150", "0.250", "0.200",
+            "3.000", "0.550", "44.000",
+            f"{epoch:.2f}", "100.000",
+        ]
+        lines.append(",".join(row))
+    loopdata = "\n".join(lines) + "\n"
+
+    half = n_rows // 2
+    session = {
+        "trackTitle": "Synthetic Test Track",
+        "brandName": "TestCar",
+        "totalTime": n_rows * dt,
+        "lats": [],
+        "laps": [
+            {"idx": 1, "startDataIndex": 0, "endDataIndex": half - 1},
+            {"idx": 2, "startDataIndex": half, "endDataIndex": n_rows - 1},
+        ],
+        "obd": {
+            "version": 5,
+            "fileName": "test.obd",
+            "pidEnums": (
+                '["PID_RPM", "PID_ACC_POS", "PID_BRAKE_PRESS", '
+                '"PID_OIL_TEMP", "PID_COOLANT_TEMP", "PID_MAP"]'
+            ),
+        },
+    }
+    obd_lines = []
+    for i in range(60):
+        obd_lines.append(
+            f"{i * 0.1:.3f},7.84,{3000 + i * 10},20.0,0.0,90.0,85.0,100.0"
+        )
+    obd_text = "\n".join(obd_lines) + "\n"
+
+    inner_buffer = __import__("io").BytesIO()
+    with zipfile.ZipFile(inner_buffer, "w", compression=zipfile.ZIP_DEFLATED) as inner:
+        inner.writestr("loopdata_2026-10-03_16_26_59.txt", loopdata)
+        inner.writestr("o7gnx_test.json", json.dumps(session))
+        inner.writestr("20261003162659.obd", obd_text)
+    plain = inner_buffer.getvalue()
+    pad = 16 - len(plain) % 16
+    cipher = AES.new(
+        bytes.fromhex("6932466c655a6e640000000000000000"),
+        AES.MODE_CBC,
+        bytes.fromhex("69336576386c656e0000000000000000"),
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as outer:
+        outer.writestr("track_test.png", b"\x89PNG\r\n\x1a\n")
+        outer.writestr("o7gnx_test.group", cipher.encrypt(plain + bytes([pad]) * pad))
+
+
 def _write_backup_rcz(path):
     """Write a tiny RaceChrono backup containing two nested sessions."""
     import zipfile

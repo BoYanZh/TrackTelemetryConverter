@@ -154,6 +154,23 @@ CHANNEL_ALIASES = {
     "engine_oil_temp":        (CH_ENGINE_OIL_TEMP, "C", 2),
     "engine_oil_temp-canbus": (CH_ENGINE_OIL_TEMP, "C", 2),
     "Gear":                   (CH_GEAR, "", 0),
+    "gear-canbus":            (CH_GEAR, "", 0),
+    "Gearbox Temp":           (CH_GEARBOX_TEMP, "C", 2),
+    "gearbox_temp-canbus":    (CH_GEARBOX_TEMP, "C", 2),
+    "throttle_pos-canbus":    (CH_THROTTLE_POS, "%", 2),
+    "yaw_rate-canbus":        (CH_YAW_RATE, "deg/s", 3),
+    "wheel_speed_fl-canbus":  (CH_WHEEL_SPEED_FL, "km/h", 2),
+    "wheel_speed_fr-canbus":  (CH_WHEEL_SPEED_FR, "km/h", 2),
+    "wheel_speed_rl-canbus":  (CH_WHEEL_SPEED_RL, "km/h", 2),
+    "wheel_speed_rr-canbus":  (CH_WHEEL_SPEED_RR, "km/h", 2),
+
+    # Dragy VBO `-obd` columns (also written by this project's VBO exporter).
+    "rpm-obd":                 (CH_ENGINE_RPM, "rpm", 0),
+    "acceleration-obd":         (CH_ACCELERATOR_POS, "%", 2),
+    "brake_pressure-obd":       (CH_BRAKE_PRESS, "kPa", 2),
+    "engine_oil_temp-obd":      (CH_ENGINE_OIL_TEMP, "C", 2),
+    "coolant_temp-obd":         (CH_COOLANT_TEMP, "C", 2),
+    "manifold_pressure-obd":    (CH_MANIFOLD_PRESS, "kPa", 2),
 
     # RaceChrono raw OBD_ IDs (Toyota GR86 / FT86 CAN Bus)
     # NOTE: the even PIDs are tire pressures (kPa, verified on the

@@ -160,3 +160,6 @@ class MotecLog(object):
     def write_csv(self, csv_filename, data_log, wallclock=False):
         from .exporters.csv_export import write_csv
         return write_csv(data_log, csv_filename, wallclock=wallclock)
+    def write_vbo(self, vbo_filename, data_log):
+        from .exporters.vbo_export import write_vbo
+        return write_vbo(data_log, vbo_filename)

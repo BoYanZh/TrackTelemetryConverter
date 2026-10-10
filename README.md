@@ -12,6 +12,7 @@ Supported inputs:
 - AIM `.xrk` / `.xrz`
 - Garmin `.fit`
 - Racelogic VBOX `.vbo`
+- Dragy `.dlap` (requires `pip install ".[dlap]"`)
 - COBB Accessport and PB Buddy CSV
 - raw CAN logs with a DBC file
 - generic CSV
@@ -39,6 +40,7 @@ Install only the optional parsers you need:
 python -m pip install ".[can]"
 python -m pip install ".[fit]"
 python -m pip install ".[xrk]"
+python -m pip install ".[dlap]"
 ```
 
 For every optional parser and the test suite:
@@ -58,6 +60,7 @@ track-telemetry session.rcz RCZ
 track-telemetry session.xrk XRK
 track-telemetry session.fit FIT
 track-telemetry vbox.vbo VBO
+track-telemetry dragy.dlap DLAP
 track-telemetry can.log CAN --dbc vehicle.dbc
 ```
 
@@ -67,9 +70,9 @@ The package module is an equivalent fallback:
 python -m track_telemetry_converter session.rcz AUTO
 ```
 
-`AUTO` detects IBT, RCZ, XRK/XRZ, FIT, VBO, PB Buddy, AIM/RaceChrono CSV,
+`AUTO` detects IBT, RCZ, XRK/XRZ, FIT, VBO, DLAP, PB Buddy, AIM/RaceChrono CSV,
 Accessport CSV, and generic CSV inputs. Explicit choices are `CAN`, `CSV`,
-`ACCESSPORT`, `RACECHRONO`, `RCZ`, `PBBUDDY`, `VBO`, `IBT`, `XRK`, and `FIT`.
+`ACCESSPORT`, `RACECHRONO`, `RCZ`, `PBBUDDY`, `VBO`, `DLAP`, `IBT`, `XRK`, and `FIT`.
 
 Common options:
 
@@ -101,7 +104,7 @@ Batch-convert a whole directory with per-file format detection:
 track-telemetry data/ AUTO --recursive --force
 ```
 
-`AUTO` detects RCZ, IBT, XRK/XRZ, FIT, VBO, and CSV dialects for each file,
+`AUTO` detects RCZ, IBT, XRK/XRZ, FIT, VBO, DLAP, and CSV dialects for each file,
 so mixed inputs convert in one run. Outputs are written next to each input and
 existing outputs are skipped unless `--force` is given. Add `--recursive` to
 include subdirectories. RaceChrono backup archives are skipped with a notice
@@ -137,7 +140,7 @@ Run `track-telemetry --help` for the authoritative option list.
 - `--g-source {auto,sensor,calc}` selects hardware or GPS-derived G channels.
 - `--mask-interp-gaps` leaves long sampling gaps as `NaN` instead of bridging
   them.
-- `--csv`, `--gpx`, and `--kml` add optional exports.
+- `--csv`, `--vbo`, `--gpx`, and `--kml` add optional exports.
 
 ## Project layout
 

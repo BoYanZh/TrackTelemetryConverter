@@ -93,6 +93,7 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
             t_rel = t_sec - t0
             if t_rel < 0:
                 t_rel += 86400.0  # Handle midnight wrapping
+            row_vals = {}
             for idx, (out_name, is_latlon, is_lon) in col_idx_map.items():
                 try:
                     val_str = parts[idx]
@@ -100,6 +101,11 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
                         v_val = _parse_vbo_latlon(val_str, is_lon=is_lon)
                     else:
                         v_val = float(val_str)
-                    data_log.channels[out_name].messages.append(Message(t_rel, v_val))
+                    # Several VBO writers emit the same signal twice (raw +
+                    # `-calc`/`-canbus` variants). One sample per channel per
+                    # row; later columns win (refined values sort last).
+                    row_vals[out_name] = v_val
                 except ValueError:
                     pass
+            for out_name, v_val in row_vals.items():
+                data_log.channels[out_name].messages.append(Message(t_rel, v_val))
