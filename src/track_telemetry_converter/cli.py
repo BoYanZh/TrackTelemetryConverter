@@ -152,8 +152,9 @@ def _dlap_output_path(ld_filename, source_path):
 _auto_detect_log_type = auto_detect_log_type
 
 
-def process_one_file(args, stint_override=None, output_override=None,  # noqa: C901 - orchestration entry; split when extending
-                     session_override=None):
+def _resolve_process_args(args, stint_override=None, output_override=None,
+                          session_override=None):
+    """Resolve stint/output/session overrides for one conversion."""
     stint_arg = stint_override if stint_override is not None else args.stint
     out_base = output_override if output_override is not None else args.output
     target_session = (
@@ -163,7 +164,11 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
     )
     if str(target_session).lower() == "all":
         target_session = None
+    return stint_arg, out_base, target_session
 
+
+def _detect_process_type(args):
+    """Determine the active log type (AUTO detection included)."""
     active_type = args.log_type
     if active_type == "AUTO" or args.log.lower().endswith(".rcz"):
         if args.log.lower().endswith(".rcz"):
@@ -171,125 +176,123 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
         else:
             active_type = auto_detect_log_type(args.log)
             print(f"Auto-detected log type: {active_type}")
+    return active_type
 
-    if active_type == "RCZ" and str(stint_arg).lower() == "all":
-        try:
-            stints = get_rcz_stints(args.log, target_session=target_session)
-        except Exception as e:
-            print(f"Warning: Failed checking stints, falling back to default export: {e}")
-        else:
-            if len(stints) > 1:
-                print(f"Auto-detected {len(stints)} stints in RCZ log: {stints}")
-                base_output = out_base if out_base else args.log
-                base_name, _ = os.path.splitext(base_output)
-                exported_files = []
-                for st in stints:
-                    st_out = f"{base_name}_stint{st}"
-                    print(f"\n=== Exporting Stint {st} -> {st_out} ===")
-                    process_one_file(
-                        args,
-                        stint_override=str(st),
-                        output_override=st_out,
-                        session_override=target_session,
-                    )
-                    exported_files.append(st_out)
-                print("Auto-stint split export complete.")
-                return exported_files
 
-    ld_filename, ldx_filename, output_targets = _output_paths(args, out_base)
-    ensure_output_targets(
-        output_targets,
-        force=getattr(args, "force", False),
-        source_path=args.log,
-    )
+def _fanout_rcz_stints(args, active_type, stint_arg, target_session, out_base):
+    """Export each RCZ stint via recursion; return file list or None."""
+    if active_type != "RCZ" or str(stint_arg).lower() != "all":
+        return None
+    try:
+        stints = get_rcz_stints(args.log, target_session=target_session)
+    except Exception as e:
+        print(f"Warning: Failed checking stints, falling back to default export: {e}")
+        return None
+    if len(stints) <= 1:
+        return None
+    print(f"Auto-detected {len(stints)} stints in RCZ log: {stints}")
+    base_output = out_base if out_base else args.log
+    base_name, _ = os.path.splitext(base_output)
+    exported_files = []
+    for st in stints:
+        st_out = f"{base_name}_stint{st}"
+        print(f"\n=== Exporting Stint {st} -> {st_out} ===")
+        process_one_file(
+            args,
+            stint_override=str(st),
+            output_override=st_out,
+            session_override=target_session,
+        )
+        exported_files.append(st_out)
+    print("Auto-stint split export complete.")
+    return exported_files
 
-    print("Loading log...")
-    data_log = DataLog()
 
-    if active_type == "CAN":
-        try:
-            import cantools
-        except ImportError:
-            print("ERROR: 'cantools' package is required for CAN log processing.")
-            print("  Install with: pip install cantools")
-            sys.exit(1)
+def _read_input_lines(log_path):
+    with open(log_path, encoding="utf-8", errors="ignore") as file:
+        return file.readlines()
 
-        with open(args.log) as file:
-            lines = file.readlines()
 
-        if not os.path.isfile(args.dbc):
-            print(f"ERROR: DBC file {args.dbc} does not exist")
-            sys.exit(1)
+# Text-log readers: type -> (announcement, DataLog method, passes target_lap).
+_TEXT_LOG_READERS = {
+    "CSV": ("Extracting data...", "from_csv_log", False),
+    "ACCESSPORT": ("Extracting data...", "from_accessport_log", False),
+    "RACECHRONO": ("Extracting data...", "from_racechrono_log", True),
+    "PBBUDDY": ("Extracting PB Buddy data...", "from_pbbuddy_log", True),
+    "VBO": ("Extracting Racelogic VBO data...", "from_vbo_log", True),
+}
 
-        print("Loading DBC...")
-        can_db = cantools.database.load_file(args.dbc)
+# Path-based readers: type -> (announcement, DataLog method, passes target_lap).
+_PATH_LOG_READERS = {
+    "FIT": ("Extracting Garmin .fit telemetry...", "from_fit_log", True),
+    "XRK": ("Extracting AIM XRK/XRZ telemetry...", "from_xrk_log", True),
+    "DLAP": ("Extracting Dragy DLAP data...", "from_dlap_log", True),
+    "IBT": ("Extracting iRacing .ibt telemetry...", "from_ibt_log", False),
+}
 
-        print("Extracting data...")
-        data_log.from_can_log(lines, can_db)
-    elif active_type == "CSV":
-        with open(args.log, encoding="utf-8", errors="ignore") as file:
-            lines = file.readlines()
-        print("Extracting data...")
-        data_log.from_csv_log(lines)
-    elif active_type == "ACCESSPORT":
-        with open(args.log, encoding="utf-8", errors="ignore") as file:
-            lines = file.readlines()
-        print("Extracting data...")
-        data_log.from_accessport_log(lines)
-    elif active_type == "RACECHRONO":
-        with open(args.log, encoding="utf-8", errors="ignore") as file:
-            lines = file.readlines()
-        print("Extracting data...")
-        data_log.from_racechrono_log(lines, target_lap=args.lap)
-    elif active_type == "PBBUDDY":
-        with open(args.log, encoding="utf-8", errors="ignore") as file:
-            lines = file.readlines()
-        print("Extracting PB Buddy data...")
-        data_log.from_pbbuddy_log(lines, target_lap=args.lap)
-    elif active_type == "VBO":
-        with open(args.log, encoding="utf-8", errors="ignore") as file:
-            lines = file.readlines()
-        print("Extracting Racelogic VBO data...")
-        data_log.from_vbo_log(lines, target_lap=args.lap)
-    elif active_type == "DLAP":
-        print("Extracting Dragy DLAP data...")
-        data_log.from_dlap_log(args.log, target_lap=args.lap)
-    elif active_type == "RCZ":
-        print("Extracting RCZ data directly...")
-        data_log.from_rcz_log(args.log, target_lap=args.lap,
-                              target_stint=stint_arg, min_lap_sec=args.min_lap_sec,
-                              mask_interp_gaps=args.mask_interp_gaps,
-                              target_session=target_session)
-    elif active_type == "IBT":
-        print("Extracting iRacing .ibt telemetry...")
-        data_log.from_ibt_log(args.log)
-    elif active_type == "XRK":
-        print("Extracting AIM XRK/XRZ telemetry...")
-        data_log.from_xrk_log(args.log, target_lap=args.lap)
-    elif active_type == "FIT":
-        print("Extracting Garmin .fit telemetry...")
-        data_log.from_fit_log(args.log, target_lap=args.lap)
 
-    if not data_log.channels:
-        print("ERROR: Failed to find any channels in log data")
+def _extract_can_log(args, data_log):
+    """Extract CAN channels using the configured DBC file."""
+    try:
+        import cantools
+    except ImportError:
+        print("ERROR: 'cantools' package is required for CAN log processing.")
+        print("  Install with: pip install cantools")
         sys.exit(1)
 
-    print(f"Parsed {data_log.duration():.1f}s log with {len(data_log.channels)} channels:")
-    for channel in data_log.channels.values():
-        print(f"\t{channel}")
+    lines = _read_input_lines(args.log)
 
-    resample_freq = data_log.resample(args.frequency, mask_interp_gaps=args.mask_interp_gaps)
-    print(f"Resampled channels at {resample_freq:.1f} Hz...")
+    if not os.path.isfile(args.dbc):
+        print(f"ERROR: DBC file {args.dbc} does not exist")
+        sys.exit(1)
 
-    print("Calculating math channels (g-source: {})...".format(getattr(args, "g_source", "auto")))
-    data_log.calculate_math_channels(
-        g_source=getattr(args, "g_source", "auto"),
-        gear_ratio_thresholds=getattr(args, "gear_ratio_thresholds", None),
-        gearbox=getattr(args, "gearbox", None),
-    )
+    print("Loading DBC...")
+    can_db = cantools.database.load_file(args.dbc)
 
-    print("Converting to MoTeC log...")
+    print("Extracting data...")
+    data_log.from_can_log(lines, can_db)
 
+
+def _extract_rcz_log(args, data_log, active_type, stint_arg, target_session):
+    """Extract RCZ channels with stint/session selection."""
+    print("Extracting RCZ data directly...")
+    data_log.from_rcz_log(args.log, target_lap=args.lap,
+                          target_stint=stint_arg, min_lap_sec=args.min_lap_sec,
+                          mask_interp_gaps=args.mask_interp_gaps,
+                          target_session=target_session)
+
+
+def _extract_log_data(args, active_type, data_log, stint_arg, target_session):
+    """Populate channels from the input file according to its type."""
+    print("Loading log...")
+
+    if active_type == "CAN":
+        _extract_can_log(args, data_log)
+        return
+    if active_type == "RCZ":
+        _extract_rcz_log(args, data_log, active_type, stint_arg, target_session)
+        return
+    if active_type in _TEXT_LOG_READERS:
+        message, method, use_lap = _TEXT_LOG_READERS[active_type]
+        lines = _read_input_lines(args.log)
+        print(message)
+        if use_lap:
+            getattr(data_log, method)(lines, target_lap=args.lap)
+        else:
+            getattr(data_log, method)(lines)
+        return
+    if active_type in _PATH_LOG_READERS:
+        message, method, use_lap = _PATH_LOG_READERS[active_type]
+        print(message)
+        if use_lap:
+            getattr(data_log, method)(args.log, target_lap=args.lap)
+        else:
+            getattr(data_log, method)(args.log)
+        return
+
+
+def _build_motec_log(args, data_log):
+    """Resolve venue/event/driver metadata and build the MoTeC log."""
     meta = getattr(data_log, "metadata", {})
 
     venue_name = args.venue_name if args.venue_name else meta.get("venue_name", "")
@@ -334,7 +337,11 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
 
     motec_log.initialize()
     motec_log.add_all_channels(data_log)
+    return motec_log
 
+
+def _write_all_outputs(args, motec_log, data_log, ld_filename, ldx_filename, output_targets):
+    """Write the .ld/.ldx pair plus every requested auxiliary export."""
     print("Saving MoTeC log...")
     output_dir = os.path.dirname(ld_filename)
     if output_dir and not os.path.isdir(output_dir):
@@ -383,6 +390,52 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
 
     print("Done!")
     return output_targets
+
+
+def process_one_file(args, stint_override=None, output_override=None,
+                     session_override=None):
+    stint_arg, out_base, target_session = _resolve_process_args(
+        args, stint_override, output_override, session_override,
+    )
+    active_type = _detect_process_type(args)
+
+    stint_files = _fanout_rcz_stints(args, active_type, stint_arg, target_session, out_base)
+    if stint_files is not None:
+        return stint_files
+
+    ld_filename, ldx_filename, output_targets = _output_paths(args, out_base)
+    ensure_output_targets(
+        output_targets,
+        force=getattr(args, "force", False),
+        source_path=args.log,
+    )
+
+    data_log = DataLog()
+    _extract_log_data(args, active_type, data_log, stint_arg, target_session)
+
+    if not data_log.channels:
+        print("ERROR: Failed to find any channels in log data")
+        sys.exit(1)
+
+    print(f"Parsed {data_log.duration():.1f}s log with {len(data_log.channels)} channels:")
+    for channel in data_log.channels.values():
+        print(f"\t{channel}")
+
+    resample_freq = data_log.resample(args.frequency, mask_interp_gaps=args.mask_interp_gaps)
+    print(f"Resampled channels at {resample_freq:.1f} Hz...")
+
+    print("Calculating math channels (g-source: {})...".format(getattr(args, "g_source", "auto")))
+    data_log.calculate_math_channels(
+        g_source=getattr(args, "g_source", "auto"),
+        gear_ratio_thresholds=getattr(args, "gear_ratio_thresholds", None),
+        gearbox=getattr(args, "gearbox", None),
+    )
+
+    print("Converting to MoTeC log...")
+
+    motec_log = _build_motec_log(args, data_log)
+
+    return _write_all_outputs(args, motec_log, data_log, ld_filename, ldx_filename, output_targets)
 
 
 _process_one = process_one_file
