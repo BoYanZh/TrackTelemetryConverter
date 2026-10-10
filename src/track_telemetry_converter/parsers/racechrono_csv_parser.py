@@ -80,190 +80,16 @@ def _read_racechrono_units(log_lines, header_idx):
     return []
 
 
-def _build_column_specs(data_log, channel_names, unit_row):
+
+
+
+
+def _build_racechrono_columns(data_log, channel_names, unit_row):
     """Create channels and per-column (index, channel, factor, offset) specs.
 
     Returns (col_specs, lap_number_idx). Unit factors convert file units to
-    canonical MoTeC units: speed x3.6 > mph > psi-brake > F->C > bar-press >
-    yaw-negate. The fused multiply-add form is bit-identical to the original
-    per-branch expressions (adding +0.0 / multiplying by 1.0 are exact).
+    canonical MoTeC units; see _parse_racechrono_rows for the row loop.
     """
-    # Check if yaw_rate exists, otherwise check for y_rate_of_rotation / z_rate_of_rotation / GPS Gyro
-    has_yaw = any(_norm_header(h) in ["yaw rate", "gps gyro", "chassis yaw rate"] for h in channel_names)
-
-    # Base mapping from typical RaceChrono / AiM / MoTeC columns to MoTeC terminology and units.
-    rc_to_motec_map = {
-        "lap_number": {"name": CH_LAP_NUMBER, "units": ""},
-        "elapsed_time": {"name": CH_RUNNING_TIME, "units": "s"},
-        "distance_traveled": {"name": CH_CORR_DIST, "units": "m"},
-        "accuracy": {"name": CH_GPS_ACCURACY, "units": "m"},
-        "altitude": {"name": CH_GPS_ALTITUDE, "units": "m"},
-        "bearing": {"name": CH_GPS_HEADING, "units": "deg"},
-        "device_battery_level": {"name": CH_DEVICE_BATTERY, "units": "%"},
-        "fix_type": {"name": CH_GPS_FIX, "units": ""},
-        "latitude": {"name": CH_GPS_LATITUDE, "units": "deg"},
-        "longitude": {"name": CH_GPS_LONGITUDE, "units": "deg"},
-        "satellites": {"name": CH_GPS_SATS, "units": ""},
-        "speed": {"name": CH_GROUND_SPEED, "units": "km/h"},
-        "combined_acc": {"name": CH_G_COMBINED, "units": "G"},
-        "lateral_acc": {"name": CH_CG_ACCEL_LAT, "units": "G"},
-        "lean_angle": {"name": CH_LEAN_ANGLE, "units": "deg"},
-        "longitudinal_acc": {"name": CH_CG_ACCEL_LON, "units": "G"},
-        "accelerator_pos": {"name": CH_THROTTLE_POS, "units": "%"},
-        "brake_pos": {"name": CH_BRAKE_POS, "units": "%"},
-        "brake_pressure": {"name": CH_BRAKE_PRESS, "units": "kPa"},
-        "coolant_temp": {"name": CH_COOLANT_TEMP, "units": "C"},
-        "engine_oil_temp": {"name": CH_ENGINE_OIL_TEMP, "units": "C"},
-        "rpm": {"name": CH_ENGINE_RPM, "units": "rpm"},
-        "steering_angle": {"name": CH_STEERING_ANGLE, "units": "deg"},
-        "yaw_rate": {"name": CH_YAW_RATE, "units": "deg/s"},
-        "gear": {"name": CH_GEAR, "units": ""},
-        "gear_position": {"name": CH_GEAR, "units": ""},
-        # AiM Solo / RaceStudio CSV Mappings
-        "gps speed": {"name": CH_GROUND_SPEED, "units": "km/h"},
-        "gps latacc": {"name": CH_CG_ACCEL_LAT, "units": "G"},
-        "gps lonacc": {"name": CH_CG_ACCEL_LON, "units": "G"},
-        "gps gyro": {"name": CH_YAW_RATE, "units": "deg/s"},
-        "gps lat": {"name": CH_GPS_LATITUDE, "units": "deg"},
-        "gps lon": {"name": CH_GPS_LONGITUDE, "units": "deg"},
-        "gps altitude": {"name": CH_GPS_ALTITUDE, "units": "m"},
-        "gps heading": {"name": CH_GPS_HEADING, "units": "deg"},
-        "gps posaccuracy": {"name": CH_GPS_ACCURACY, "units": "m"},
-        "pps": {"name": CH_THROTTLE_POS, "units": "%"},
-        "steerangle": {"name": CH_STEERING_ANGLE, "units": "deg"},
-        "brakepress": {"name": CH_BRAKE_PRESS, "units": "kPa"},
-        "oiltemp": {"name": CH_ENGINE_OIL_TEMP, "units": "C"},
-        "ect": {"name": CH_COOLANT_TEMP, "units": "C"},
-        "intake air temp": {"name": CH_INTAKE_TEMP, "units": "C"},
-        "oilpressure0": {"name": CH_ENGINE_OIL_PRESS, "units": "kPa"},
-        "yawrate": {"name": CH_YAW_RATE, "units": "deg/s"},
-        "wheelspeedfl": {"name": CH_WHEEL_SPEED_FL, "units": "km/h"},
-        "wheelspeedfr": {"name": CH_WHEEL_SPEED_FR, "units": "km/h"},
-        "wheelspeedrl": {"name": CH_WHEEL_SPEED_RL, "units": "km/h"},
-        "wheelspeedrr": {"name": CH_WHEEL_SPEED_RR, "units": "km/h"},
-        "speedv": {"name": CH_VEHICLE_SPEED, "units": "km/h"},
-        # MoTeC CSV Mappings
-        "corr speed": {"name": CH_GROUND_SPEED, "units": "km/h"},
-        "gps latitude": {"name": CH_GPS_LATITUDE, "units": "deg"},
-        "gps longitude": {"name": CH_GPS_LONGITUDE, "units": "deg"},
-        "corr dist": {"name": CH_CORR_DIST, "units": "m"},
-        # RaceChrono dynamic-column exports. These source-qualified names exceed
-        # MoTeC LD's 32-byte channel-name field, so map the measured CAN values
-        # to their standard names before writing.
-        "longitudinal acceleration (g) *canbus": {"name": CH_CG_ACCEL_LON, "units": "G"},
-        "combined acceleration (g) *canbus": {"name": CH_G_COMBINED, "units": "G"},
-        "engine oil temperature (.c) *canbus": {"name": CH_ENGINE_OIL_TEMP, "units": "C"},
-    }
-
-    # Map keys are matched against underscore/dash-normalized headers.
-    rc_to_motec_map = {_norm_header(k): v for k, v in rc_to_motec_map.items()}
-
-    # Fallback for yaw rate if not named "yaw_rate" or "gps gyro"
-    if not has_yaw:
-        if "z rate of rotation" in [_norm_header(h) for h in channel_names]:
-            rc_to_motec_map["z rate of rotation"] = {"name": CH_YAW_RATE, "units": "deg/s"}
-        elif "y rate of rotation" in [_norm_header(h) for h in channel_names]:
-            rc_to_motec_map["y rate of rotation"] = {"name": CH_YAW_RATE, "units": "deg/s"}
-
-    # Explicitly ignore uncalibrated raw IMU channels
-    ignored_columns = {
-        "x acc",
-        "y acc",
-        "z acc",
-        # Prefer the measured CAN value below over RaceChrono's calculated
-        # longitudinal acceleration. Their LD-truncated names collide.
-        "longitudinal acceleration (g) *calc",
-    }
-
-    active_columns = []
-    lap_number_idx = -1
-    col_unit_map = {}
-
-    for i, raw_name in enumerate(channel_names):
-        raw_lower = _norm_header(raw_name)
-        if not raw_name or raw_lower in ignored_columns:
-            continue
-
-        if raw_lower == "lap number" or raw_lower == "lap":
-            lap_number_idx = i + 1
-
-        unit_str = ""
-        if unit_row and i + 1 < len(unit_row):
-            unit_str = unit_row[i + 1]
-
-        if raw_lower in rc_to_motec_map:
-            motec_name = rc_to_motec_map[raw_lower]["name"]
-            motec_units = rc_to_motec_map[raw_lower]["units"]
-        else:
-            # Fallback to general parsing if no exact map is found
-            if " (" in raw_name and raw_name.endswith(")"):
-                motec_name, motec_units = raw_name.rsplit(" (", 1)
-                motec_units = motec_units[:-1]
-            else:
-                motec_name = raw_name
-                motec_units = unit_str
-
-        col_unit_map[raw_name] = unit_str.lower()
-
-        if motec_name not in data_log.channels:
-            data_log.add_channel(motec_name, motec_units, float, 0)
-            active_columns.append((i, motec_name, raw_name))
-
-    # Precompute per-column transforms so the hot row loop does no string
-    # normalization, dict lookups, or channel-attribute writes per cell.
-    # Each spec: (values index, Channel object, factor, offset) with
-    # value = (raw + offset) * factor. Precedence matches the historical
-    # elif chain: speed x3.6 > mph > psi-brake > F->C > bar-press > yaw-negate.
-    col_specs = []
-    for col_idx, name, raw_name in active_columns:
-        cell_lower = _norm_header(raw_name)
-        unit_lower = col_unit_map.get(raw_name, "")
-        factor, offset = 1.0, 0.0
-        if cell_lower == "speed" and unit_lower in ("", "m/s"):
-            factor = 3.6
-        elif unit_lower == "mph":
-            factor = 1.60934
-        elif unit_lower == "psi" and name == CH_BRAKE_PRESS:
-            factor = 6.89476
-        elif unit_lower == "f":
-            factor, offset = 5.0 / 9.0, -32.0
-        elif unit_lower == "bar" and "press" in name.lower():
-            factor = 100.0
-        elif cell_lower in ("yaw rate", "z rate of rotation", "y rate of rotation") and name == CH_YAW_RATE:
-            factor = -1.0
-        col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
-    return col_specs, lap_number_idx
-
-
-def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
-    """ Creates channels populated with messages from a RaceChrono CSV log file.
-
-    This maps standard RaceChrono columns to MoTeC-compatible names and units.
-
-    log_lines: List, containing CSV log lines
-    target_lap: String, int, or None. If None or 'all', processes all laps in the session.
-    """
-    data_log.clear()
-    data_log.laps_info = {}
-    file_p = getattr(data_log, "log_file_path", "")
-    data_log.datetime = data_log._extract_datetime_from_text(log_lines, file_p)
-    data_log._extract_metadata(log_lines, file_p)
-
-    if not log_lines:
-        return
-
-    header_idx = _find_racechrono_header(log_lines)
-    if header_idx == -1:
-        return
-
-    header = log_lines[header_idx].strip("\n")
-    # Split and strip any quotes from header names
-    raw_headers = [h.strip().strip('"').strip("'") for h in header.split(",")]
-
-    unit_row = _read_racechrono_units(log_lines, header_idx)
-
-    channel_names = raw_headers[1:]
-
     # Check if yaw_rate exists, otherwise check for y_rate_of_rotation / z_rate_of_rotation / GPS Gyro
     has_yaw = any(_norm_header(h) in ["yaw rate", "gps gyro", "chassis yaw rate"] for h in channel_names)
 
@@ -410,18 +236,15 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
         elif cell_lower in ("yaw rate", "z rate of rotation", "y rate of rotation") and name == CH_YAW_RATE:
             factor = -1.0
         col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
+    return col_specs, lap_number_idx
+
+def _parse_racechrono_rows(log_lines, header_idx, col_specs, lap_number_idx, target_lap_str):
+    """Single pass over data rows; return per-lap timing metadata."""
     col_decimals = [0] * len(col_specs)
     chan_buffers = [([], []) for _ in col_specs]
     _quotes = ('"', "'")
 
-    # Parse target_lap filter if specified
-    target_lap_str = None
-    if target_lap is not None and str(target_lap).lower() != "all":
-        target_lap_str = str(target_lap).strip()
-
-    # Track lap timing metadata
     laps_timing = {}
-
     # Single pass over data rows: split once, validate the timestamp, apply
     # the lap filter, and append samples. (Previously this split every line
     # twice and held all rows in memory as valid_lines.)
@@ -494,6 +317,47 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
         if ts_buf:
             channel.set_samples(ts_buf, val_buf)
 
+    return laps_timing
+
+
+def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
+    """ Creates channels populated with messages from a RaceChrono CSV log file.
+
+    This maps standard RaceChrono columns to MoTeC-compatible names and units.
+
+    log_lines: List, containing CSV log lines
+    target_lap: String, int, or None. If None or 'all', processes all laps in the session.
+    """
+    data_log.clear()
+    data_log.laps_info = {}
+    file_p = getattr(data_log, "log_file_path", "")
+    data_log.datetime = data_log._extract_datetime_from_text(log_lines, file_p)
+    data_log._extract_metadata(log_lines, file_p)
+
+    if not log_lines:
+        return
+
+    header_idx = _find_racechrono_header(log_lines)
+    if header_idx == -1:
+        return
+
+    header = log_lines[header_idx].strip("\n")
+    # Split and strip any quotes from header names
+    raw_headers = [h.strip().strip('"').strip("'") for h in header.split(",")]
+
+    unit_row = _read_racechrono_units(log_lines, header_idx)
+
+    channel_names = raw_headers[1:]
+
+    col_specs, lap_number_idx = _build_racechrono_columns(data_log, channel_names, unit_row)
+
+    # Parse target_lap filter if specified
+    target_lap_str = None
+    if target_lap is not None and str(target_lap).lower() != "all":
+        target_lap_str = str(target_lap).strip()
+
+    # Track lap timing metadata
+    laps_timing = _parse_racechrono_rows(log_lines, header_idx, col_specs, lap_number_idx, target_lap_str)
     # Fallback: derive Chassis Yaw Rate from GPS Heading derivative if missing
     derive_yaw_rate_from_gps_heading(data_log)
 
