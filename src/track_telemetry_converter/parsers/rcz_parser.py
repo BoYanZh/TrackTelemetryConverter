@@ -93,6 +93,90 @@ def _load_rcz_session(z, all_names, session_prefix):
     return session_json, first_t
 
 
+
+
+def _load_rcz_traps(data_log, z, all_names, session_prefix, session_json):
+    """Load track trap markers into data_log.traps."""
+    import json
+    traps_list = []
+    track_key = session_prefix + "trackId.json"
+    try:
+        if track_key in all_names:
+            track_json = json.loads(z.read(track_key).decode("utf-8"))
+            traps_list = track_json.get("track", {}).get("traps", [])
+        elif session_prefix and "json/track_storage.json" in all_names:
+            track_storage = json.loads(
+                z.read("json/track_storage.json").decode("utf-8"),
+            )
+            tracks = track_storage.get("tracks", [])
+            track = next(
+                (
+                    item for item in tracks
+                    if session_json.get("trackLocalUuid")
+                    and item.get("localUuid") == session_json.get("trackLocalUuid")
+                ),
+                None,
+            )
+            if track is None:
+                track = next(
+                    (
+                        item for item in tracks
+                        if item.get("id") == session_json.get("trackId")
+                    ),
+                    None,
+                )
+            if track:
+                traps_list = track.get("traps", [])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        traps_list = []
+    for trap in traps_list:
+        if "centerLatitude" in trap and "centerLongitude" in trap:
+            data_log.traps.append({
+                "name": trap.get("name", "Split"),
+                "lat": trap["centerLatitude"] / 6000000.0,
+                "lon": trap["centerLongitude"] / 6000000.0,
+                "type": trap.get("type", 4),
+            })
+
+def _apply_rcz_session_meta(data_log, session_json, rcz_file_path):
+    """Apply session datetime and metadata fields."""
+    created_ms = session_json.get("timeCreated")
+    if created_ms and created_ms > 1e8:
+        data_log.session_created_epoch_ms = int(created_ms)
+    ts_ms = created_ms or session_json.get("firstTimestamp")
+    if ts_ms and ts_ms > 1e8:
+        data_log.datetime = datetime.datetime.fromtimestamp(ts_ms / 1000.0)
+        data_log.datetime_utc = datetime.datetime.fromtimestamp(
+            ts_ms / 1000.0, tz=datetime.timezone.utc,
+        )
+    else:
+        data_log.datetime = data_log._extract_datetime_from_text([], rcz_file_path)
+
+    # Store metadata
+    data_log.rcz_metadata = {
+        "title": session_json.get("title", ""),
+        "trackName": session_json.get("trackName", ""),
+        "timeCreated": session_json.get("timeCreated", 0),
+    }
+    data_log._extract_metadata([], rcz_file_path)
+    if session_json.get("trackName"):
+        data_log.metadata["venue_name"] = session_json.get("trackName")
+    if session_json.get("title"):
+        data_log.metadata["event_session"] = session_json.get("title")
+    notes = session_json.get("notes") or session_json.get("description")
+    if notes:
+        data_log.metadata["short_comment"] = notes
+
+def _select_rcz_stint(target_stint):
+    """Resolve the active stint number (0 when unspecified)."""
+    if target_stint is None or str(target_stint).lower() == "all":
+        return 0
+    try:
+        return int(target_stint)
+    except ValueError:
+        return 0
+
+
 def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  # noqa: C901 - legacy branchy parser; split when extending
                   min_lap_sec=15.0, mask_interp_gaps=False,
                   target_session=None):
@@ -151,80 +235,10 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
             return
         session_json, first_t = session_data
 
-        traps_list = []
-        track_key = session_prefix + "trackId.json"
-        try:
-            if track_key in all_names:
-                track_json = json.loads(z.read(track_key).decode("utf-8"))
-                traps_list = track_json.get("track", {}).get("traps", [])
-            elif session_prefix and "json/track_storage.json" in all_names:
-                track_storage = json.loads(
-                    z.read("json/track_storage.json").decode("utf-8"),
-                )
-                tracks = track_storage.get("tracks", [])
-                track = next(
-                    (
-                        item for item in tracks
-                        if session_json.get("trackLocalUuid")
-                        and item.get("localUuid") == session_json.get("trackLocalUuid")
-                    ),
-                    None,
-                )
-                if track is None:
-                    track = next(
-                        (
-                            item for item in tracks
-                            if item.get("id") == session_json.get("trackId")
-                        ),
-                        None,
-                    )
-                if track:
-                    traps_list = track.get("traps", [])
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            traps_list = []
-        for trap in traps_list:
-            if "centerLatitude" in trap and "centerLongitude" in trap:
-                data_log.traps.append({
-                    "name": trap.get("name", "Split"),
-                    "lat": trap["centerLatitude"] / 6000000.0,
-                    "lon": trap["centerLongitude"] / 6000000.0,
-                    "type": trap.get("type", 4),
-                })
+        _load_rcz_traps(data_log, z, all_names, session_prefix, session_json)
+        _apply_rcz_session_meta(data_log, session_json, rcz_file_path)
 
-        created_ms = session_json.get("timeCreated")
-        if created_ms and created_ms > 1e8:
-            data_log.session_created_epoch_ms = int(created_ms)
-        ts_ms = created_ms or session_json.get("firstTimestamp")
-        if ts_ms and ts_ms > 1e8:
-            data_log.datetime = datetime.datetime.fromtimestamp(ts_ms / 1000.0)
-            data_log.datetime_utc = datetime.datetime.fromtimestamp(
-                ts_ms / 1000.0, tz=datetime.timezone.utc,
-            )
-        else:
-            data_log.datetime = data_log._extract_datetime_from_text([], rcz_file_path)
-
-        # Store metadata
-        data_log.rcz_metadata = {
-            "title": session_json.get("title", ""),
-            "trackName": session_json.get("trackName", ""),
-            "timeCreated": session_json.get("timeCreated", 0),
-        }
-        data_log._extract_metadata([], rcz_file_path)
-        if session_json.get("trackName"):
-            data_log.metadata["venue_name"] = session_json.get("trackName")
-        if session_json.get("title"):
-            data_log.metadata["event_session"] = session_json.get("title")
-        notes = session_json.get("notes") or session_json.get("description")
-        if notes:
-            data_log.metadata["short_comment"] = notes
-
-        # Determine active stint to process
-        active_stint = 0
-        if target_stint is not None and str(target_stint).lower() != "all":
-            try:
-                active_stint = int(target_stint)
-            except ValueError:
-                pass
+        active_stint = _select_rcz_stint(target_stint)
         time_file = None
         timestamps_ms = None
         epoch_reference = session_json.get("firstTimestamp") or session_json.get("timeCreated")
