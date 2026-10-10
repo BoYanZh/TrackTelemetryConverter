@@ -47,7 +47,7 @@ def write_gpx(motec_log, gpx_filename, data_log):
     root = ET.Element("gpx", {
         "version": "1.1",
         "creator": "TrackTelemetryConverter",
-        "xmlns": "http://www.topografix.com/GPX/1/1"
+        "xmlns": "http://www.topografix.com/GPX/1/1",
     })
     trk = ET.SubElement(root, "trk")
     ET.SubElement(trk, "name").text = motec_log.venue_name or "Track Session"

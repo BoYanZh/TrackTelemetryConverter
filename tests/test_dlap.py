@@ -197,7 +197,7 @@ def test_cli_dlap_flag_and_source_guard():
         src = os.path.join(tmp_dir, "in.dlap")
         _write_minimal_dlap(src)
         result = _run_cli_in_process(
-            [src, "DLAP", "--output", os.path.join(tmp_dir, "in"), "--dlap"]
+            [src, "DLAP", "--output", os.path.join(tmp_dir, "in"), "--dlap"],
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert os.path.isfile(os.path.join(tmp_dir, "in_export.dlap"))

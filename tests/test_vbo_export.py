@@ -4,6 +4,7 @@ import os
 import tempfile
 
 from conftest import (
+    EXAMPLES,
     _run_cli_in_process,
     _write_minimal_dlap,
 )
@@ -152,16 +153,6 @@ def test_vbo_export_pedal_preference():
         assert "throttle_pos-canbus" in text
     finally:
         os.remove(tmp_path)
-    log = DataLog()
-    log.add_channel("Engine RPM", "rpm", float, 0)
-    log.channels["Engine RPM"].messages = [Message(0.0, 3000.0)]
-    with tempfile.NamedTemporaryFile(suffix=".vbo", delete=False) as tmp:
-        tmp_path = tmp.name
-    try:
-        assert not write_vbo(log, tmp_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 
 def test_vbo_export_requires_gps():
@@ -175,6 +166,57 @@ def test_vbo_export_requires_gps():
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+def test_vbo_columns_selection_and_rename():
+    from track_telemetry_converter.exporters.vbo_export import parse_vbo_columns
+
+    cols = parse_vbo_columns("rpm-obd, Engine RPM")
+    assert [c[0] for c in cols] == ["rpm-obd", "rpm-obd"]
+    cols = parse_vbo_columns("MyRPM=Engine RPM")
+    assert cols[0][0] == "MyRPM"
+    assert cols[0][4] == "Engine RPM"
+    for bad in ("nope", "My Col=Engine RPM", "X=", "=Engine RPM", "MyRPM=Bogus"):
+        try:
+            parse_vbo_columns(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad!r}")
+
+    log = _synthetic_gps_log()
+    log.resample(25)
+    with tempfile.NamedTemporaryFile(suffix=".vbo", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        assert write_vbo(log, tmp_path, parse_vbo_columns("rpm-obd"))
+        with open(tmp_path, encoding="utf-8") as f:
+            text = f.read()
+        assert "rpm-obd" in text
+        assert "longacc" not in text
+    finally:
+        os.remove(tmp_path)
+
+
+def test_cli_vbo_columns_flag():
+    from conftest import _run_cli_in_process
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        src = os.path.join(EXAMPLES, "vbo_sample.vbo")
+        out = os.path.join(tmp_dir, "out.ld")
+        result = _run_cli_in_process(
+            [src, "VBO", "--output", out, "--force", "--vbo",
+             "--vbo-columns", "rpm-obd"],
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        with open(os.path.join(tmp_dir, "out.vbo"), encoding="utf-8") as f:
+            assert "rpm-obd" in f.read()
+        bad = _run_cli_in_process(
+            [src, "VBO", "--output", out, "--force", "--vbo",
+             "--vbo-columns", "bogus-col"],
+        )
+        assert bad.returncode != 0
+        assert "Unknown --vbo-columns entry" in bad.stdout + bad.stderr
 
 
 def test_vbo_obd_columns_import():
@@ -236,7 +278,7 @@ def test_vbo_export_from_dlap_source():
             i for i, line in enumerate(lines) if line.strip() == "[data]"
         )
         assert len(lines) - data_idx - 1 == len(
-            log.channels["GPS Latitude"].messages
+            log.channels["GPS Latitude"].messages,
         )
 
 
@@ -248,7 +290,7 @@ def test_cli_vbo_flag_and_source_guard():
         # --output stem matches the source stem, so the plain .vbo target
         # would replace the input: the exporter must use the _export guard.
         result = _run_cli_in_process(
-            [src, "VBO", "--output", os.path.join(tmp_dir, "in"), "--vbo"]
+            [src, "VBO", "--output", os.path.join(tmp_dir, "in"), "--vbo"],
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert os.path.isfile(os.path.join(tmp_dir, "in_export.vbo"))

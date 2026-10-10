@@ -289,7 +289,7 @@ class DataLog:
                     stamp = float(line_clean.split(")")[0][1:])
                     if stamp > 1e8:
                         return datetime.datetime.fromtimestamp(
-                            stamp, tz=datetime.timezone.utc
+                            stamp, tz=datetime.timezone.utc,
                         )
                 except ValueError:
                     pass
@@ -312,7 +312,7 @@ class DataLog:
                     stamp = float(parts[0])
                     if stamp > 1e8:
                         return datetime.datetime.fromtimestamp(
-                            stamp, tz=datetime.timezone.utc
+                            stamp, tz=datetime.timezone.utc,
                         )
                 except ValueError:
                     pass
@@ -329,7 +329,7 @@ class DataLog:
                 "%Y-%m-%d",
                 "%m/%d/%y",
                 "%m/%d/%Y",
-                "%d/%m/%Y"
+                "%d/%m/%Y",
             ]
             for fmt in formats:
                 try:
@@ -347,7 +347,7 @@ class DataLog:
             "venue_name": "",
             "event_name": "",
             "event_session": "",
-            "short_comment": ""
+            "short_comment": "",
         }
 
         filename = os.path.basename(file_path) if file_path else ""

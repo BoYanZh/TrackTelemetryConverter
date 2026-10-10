@@ -70,7 +70,7 @@ jobs:
       - name: Run tests with coverage gate
         run: >
           python -m pytest -q --cov=track_telemetry_converter
-          --cov-report=term-missing --cov-fail-under=75
+          --cov-report=term-missing --cov-fail-under=85
       - name: Build wheel
         run: python -m pip wheel --no-deps --wheel-dir dist .
       - name: Compile Python sources

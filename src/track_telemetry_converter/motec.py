@@ -51,7 +51,8 @@ class MotecLog:
         self.event_session = ""
         self.long_comment = ""
         self.short_comment = ""
-        self.datetime = datetime.datetime.now()
+        # Timezone-aware UTC: dateless sources must not depend on machine locale.
+        self.datetime = datetime.datetime.now(datetime.timezone.utc)
 
         # File components from ldparser
         self.ld_header: ldHead | None = None
@@ -166,9 +167,9 @@ class MotecLog:
     def write_csv(self, csv_filename, data_log, wallclock=False):
         from .exporters.csv_export import write_csv
         return write_csv(data_log, csv_filename, wallclock=wallclock)
-    def write_vbo(self, vbo_filename, data_log):
+    def write_vbo(self, vbo_filename, data_log, columns=None):
         from .exporters.vbo_export import write_vbo
-        return write_vbo(data_log, vbo_filename)
+        return write_vbo(data_log, vbo_filename, columns)
     def write_dlap(self, dlap_filename, data_log):
         from .exporters.dlap_export import write_dlap
         return write_dlap(data_log, dlap_filename)

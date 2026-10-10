@@ -64,7 +64,7 @@ def test_xrk_convert_values_units():
 
 def test_xrk_dedupe_samples():
     ts, vs = _dedupe_samples(
-        np.array([2.0, 0.0, 1.0, 1.0]), np.array([20.0, 0.0, 10.0, 11.0])
+        np.array([2.0, 0.0, 1.0, 1.0]), np.array([20.0, 0.0, 10.0, 11.0]),
     )
     assert list(ts) == [0.0, 1.0, 2.0]
     assert list(vs) == [0.0, 11.0, 20.0]

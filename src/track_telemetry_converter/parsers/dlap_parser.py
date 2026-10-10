@@ -114,7 +114,7 @@ def _new_aes_cipher():
     except ImportError as exc:
         raise RuntimeError(
             "Dragy .dlap import requires the 'pycryptodome' package "
-            "(pip install \".[dlap]\")."
+            '(pip install ".[dlap]").',
         ) from exc
     return AES.new(_DLAP_AES_KEY, AES.MODE_CBC, _DLAP_AES_IV)
 
@@ -139,7 +139,7 @@ def _open_inner_zip(dlap_path):
     if not 1 <= pad <= 16 or plain[-pad:] != bytes([pad]) * pad:
         raise ValueError(
             "Failed to decrypt .dlap file (bad key/padding); "
-            "the file may come from a newer Dragy app version."
+            "the file may come from a newer Dragy app version.",
         )
     plain = plain[:-pad]
     if plain[:2] != b"PK":
@@ -204,7 +204,7 @@ def parse_dlap_log(data_log, dlap_file_path, target_lap=None):
     with inner:
         names = inner.namelist()
         loop_text, loop_name = _read_inner_text(
-            inner, [n for n in names if n.startswith("loopdata")]
+            inner, [n for n in names if n.startswith("loopdata")],
         )
         if loop_text is None:
             raise ValueError("Invalid .dlap file (no loopdata_*.txt entry)")
@@ -224,7 +224,7 @@ def parse_dlap_log(data_log, dlap_file_path, target_lap=None):
         origin_s = float(epoch_s[np.isfinite(epoch_s)][0])
         data_log.time_origin_epoch_ms = int(origin_s * 1000)
         data_log.datetime_utc = datetime.datetime.fromtimestamp(
-            origin_s, datetime.timezone.utc
+            origin_s, datetime.timezone.utc,
         ).replace(tzinfo=None)
         data_log.datetime = datetime.datetime.fromtimestamp(origin_s)
 

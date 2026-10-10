@@ -58,7 +58,7 @@ def test_cli_ld_ldx_roundtrip_and_overwrite_guard():
                 "Toyota GR86",
                 "--vehicle_weight",
                 "1275",
-            ]
+            ],
         )
         assert forced.returncode == 0, forced.stdout + forced.stderr
         parsed = ldData.fromfile(output)
@@ -173,7 +173,7 @@ def test_atomic_write_failure_cleans_up_partial_staged_files():
 def test_csv_auxiliary_export_does_not_replace_source():
     source = os.path.join("logs", "session.csv")
     assert _csv_output_path(os.path.join("logs", "session.ld"), source).endswith(
-        "session_export.csv"
+        "session_export.csv",
     )
 
 

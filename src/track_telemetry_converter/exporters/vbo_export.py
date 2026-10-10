@@ -48,6 +48,7 @@ from ..channels import (
     CH_WHEEL_SPEED_RL,
     CH_WHEEL_SPEED_RR,
     CH_YAW_RATE,
+    CHANNEL_ALIASES,
     DISCRETE_CHANNELS,
 )
 
@@ -125,12 +126,63 @@ def _sample_on_grid(channel, grid):
     return np.interp(grid, ts[mask], vs[mask])
 
 
+def _canonical_names():
+    """All canonical MoTeC channel names known to the importer."""
+    return {canonical for canonical, _, _ in CHANNEL_ALIASES.values()}
+
+
+def parse_vbo_columns(spec):
+    """Parse a --vbo-columns spec into extra-column descriptors.
+
+    Each comma-separated item is either a known VBO column name
+    (e.g. ``rpm-obd``), a canonical channel name (e.g. ``Engine RPM``,
+    exported under its default column), or ``CustomName=Channel Name``
+    to export a channel under a custom single-token column name.
+    Custom names are for third-party tools; only known names round-trip
+    through this project's own VBO importer.
+    Raises ValueError on unknown entries.
+    """
+    by_col = {}
+    by_channel = {}
+    for channel, (col, header, unit, fmt) in _EXTRA_COLUMN_MAP.items():
+        by_col[col] = (col, header, unit, fmt, channel)
+        by_channel[channel] = (col, header, unit, fmt, channel)
+    valid = sorted(set(by_col) | set(by_channel))
+    resolved = []
+    for raw in spec.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        if "=" in item:
+            col, _, channel = (part.strip() for part in item.partition("="))
+            if not col or not channel:
+                raise ValueError(f"Invalid --vbo-columns entry: {raw!r}")
+            if any(char.isspace() for char in col):
+                raise ValueError(
+                    f"Invalid --vbo-columns entry {raw!r}: column names "
+                    "must be single whitespace-free tokens",
+                )
+            if channel not in _canonical_names():
+                raise ValueError(
+                    f"Unknown channel in --vbo-columns entry: {channel!r}. "
+                    f"Valid channels: {sorted(_canonical_names())}",
+                )
+            resolved.append((col, col, "", lambda v: f"{v:.3f}", channel))
+        elif item in by_col:
+            resolved.append(by_col[item])
+        elif item in by_channel:
+            resolved.append(by_channel[item])
+        else:
+            raise ValueError(
+                f"Unknown --vbo-columns entry: {item!r}. Valid names: {valid}",
+            )
+    return resolved
 def _utc_origin(data_log):
     """Absolute UTC origin as a datetime, or None if unknown."""
     origin_ms = getattr(data_log, "time_origin_epoch_ms", None)
     if origin_ms:
         return datetime.datetime.fromtimestamp(
-            origin_ms / 1000.0, datetime.timezone.utc
+            origin_ms / 1000.0, datetime.timezone.utc,
         ).replace(tzinfo=None)
     dt_utc = getattr(data_log, "datetime_utc", None)
     if dt_utc is not None:
@@ -138,9 +190,13 @@ def _utc_origin(data_log):
     return None
 
 
-def write_vbo(data_log, vbo_filename):
+def write_vbo(data_log, vbo_filename, columns=None):
     """Write resampled DataLog channels to a Racelogic `.vbo` file.
 
+    ``columns`` optionally overrides the extra columns: a list of
+    ``(column, header, unit, fmt, channel)`` descriptors as returned by
+    :func:`parse_vbo_columns`. The default (None) exports every known
+    extra channel present in the log.
     Returns True on success, False if no GPS data is available.
     """
     lat_chan = data_log.channels.get(CH_GPS_LATITUDE)
@@ -168,13 +224,18 @@ def write_vbo(data_log, vbo_filename):
     height = get(CH_GPS_ALTITUDE)
 
     extras = []
-    export_names = dict(_EXTRA_COLUMN_MAP)
-    # Accelerator and throttle pedals carry the same signal (the pipeline
-    # mirrors one into the other); export a single pedal column to avoid a
-    # redundant duplicate.
-    if CH_ACCELERATOR_POS in data_log.channels and CH_THROTTLE_POS in data_log.channels:
-        del export_names[CH_THROTTLE_POS]
-    for ch_name, (col_name, header_name, unit, fmt) in export_names.items():
+    if columns is None:
+        export_names = dict(_EXTRA_COLUMN_MAP)
+        # Accelerator and throttle pedals carry the same signal (the pipeline
+        # mirrors one into the other); export a single pedal column to avoid a
+        # redundant duplicate.
+        if CH_ACCELERATOR_POS in data_log.channels and CH_THROTTLE_POS in data_log.channels:
+            del export_names[CH_THROTTLE_POS]
+        columns = [
+            (col_name, header_name, unit, fmt, ch_name)
+            for ch_name, (col_name, header_name, unit, fmt) in export_names.items()
+        ]
+    for col_name, header_name, unit, fmt, ch_name in columns:
         chan = data_log.channels.get(ch_name)
         if chan is None:
             continue
@@ -188,7 +249,7 @@ def write_vbo(data_log, vbo_filename):
     origin = _utc_origin(data_log)
     if origin is not None:
         date_line = "File created on {} @ {}".format(
-            origin.strftime("%d/%m/%Y"), origin.strftime("%H:%M")
+            origin.strftime("%d/%m/%Y"), origin.strftime("%H:%M"),
         )
         day_start = origin.replace(hour=0, minute=0, second=0, microsecond=0)
     else:

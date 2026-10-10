@@ -22,7 +22,7 @@ def ensure_output_targets(targets, force=False, source_path=None):
     for path in normalized:
         if source and os.path.normcase(path) == os.path.normcase(source):
             raise ValueError(
-                f"refusing to replace input file: {path}; choose a different --output"
+                f"refusing to replace input file: {path}; choose a different --output",
             )
         if os.path.exists(path) and not force:
             raise FileExistsError(f"output already exists: {path}; pass --force to replace it")
@@ -34,30 +34,30 @@ def verify_motec_pair(ld_path, ldx_path, expected_channels):
     if len(parsed.channs) != len(expected_channels):
         raise RuntimeError(
             f"MoTeC verification failed: expected {len(expected_channels)} channels, "
-            f"found {len(parsed.channs)}"
+            f"found {len(parsed.channs)}",
         )
 
     for expected, actual in zip(expected_channels, parsed.channs, strict=False):
         if actual.name.strip() != expected.name.strip():
             raise RuntimeError(
                 f"MoTeC verification failed: channel {expected.name!r} read back as "
-                f"{actual.name!r}"
+                f"{actual.name!r}",
             )
         actual_values = np.asarray(actual.data)
         expected_values = np.asarray(expected._data)
         if len(actual_values) != len(expected_values):
             raise RuntimeError(
                 f"MoTeC verification failed: channel {actual.name!r} has "
-                f"{len(actual_values)} samples, expected {len(expected_values)}"
+                f"{len(actual_values)} samples, expected {len(expected_values)}",
             )
         if actual.freq != expected.freq:
             raise RuntimeError(
                 f"MoTeC verification failed: channel {actual.name!r} frequency "
-                f"{actual.freq} != {expected.freq}"
+                f"{actual.freq} != {expected.freq}",
             )
         if not np.array_equal(actual_values, expected_values, equal_nan=True):
             raise RuntimeError(
-                f"MoTeC verification failed: channel {actual.name!r} data changed on write"
+                f"MoTeC verification failed: channel {actual.name!r} data changed on write",
             )
 
     root = ET.parse(ldx_path).getroot()  # noqa: S314 - verifies our own just-written file

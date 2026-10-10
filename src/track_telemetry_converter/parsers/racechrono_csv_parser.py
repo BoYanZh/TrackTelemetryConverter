@@ -247,7 +247,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
         col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
     col_decimals = [0] * len(col_specs)
     chan_buffers = [([], []) for _ in col_specs]
-    _QUOTES = ('"', "'")
+    _quotes = ('"', "'")
 
     # Parse target_lap filter if specified
     target_lap_str = None
@@ -269,7 +269,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
         if lap_number_idx != -1 and lap_number_idx < n_vals:
             lap_val = values[lap_number_idx]
             s = lap_val.strip()
-            if s[:1] in _QUOTES or s[-1:] in _QUOTES:
+            if s[:1] in _quotes or s[-1:] in _quotes:
                 s = s.strip('"').strip("'")
             lap_val = s
             if target_lap_str and lap_val != target_lap_str:
@@ -278,7 +278,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
             lap_val = "1"
 
         t_str = values[0].strip()
-        if t_str[:1] in _QUOTES or t_str[-1:] in _QUOTES:
+        if t_str[:1] in _quotes or t_str[-1:] in _quotes:
             t_str = t_str.strip('"').strip("'")
         try:
             t = float(t_str)
@@ -300,7 +300,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
             s = values[val_idx].strip()
             if not s:
                 continue
-            if s[:1] in _QUOTES or s[-1:] in _QUOTES:
+            if s[:1] in _quotes or s[-1:] in _quotes:
                 s = s.strip('"').strip("'")
                 if not s:
                     continue
@@ -369,7 +369,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
                         "start_time": start_t,
                         "end_time": btime,
                         "duration": dur,
-                        "stint": 0
+                        "stint": 0,
                     })
             elif idx == total_beacons - 1:
                 if dur > 15.0:
@@ -380,7 +380,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
                         "start_time": start_t,
                         "end_time": btime,
                         "duration": dur,
-                        "stint": 0
+                        "stint": 0,
                     })
             else:
                 if dur >= 15.0:
@@ -392,7 +392,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
                         "start_time": start_t,
                         "end_time": btime,
                         "duration": dur,
-                        "stint": 0
+                        "stint": 0,
                     })
                     if dur < fastest_dur:
                         fastest_dur = dur
@@ -403,7 +403,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
             "laps": lap_items,
             "total_laps": len(lap_items),
             "fastest_lap": fastest_lap if fastest_lap is not None else 1,
-            "fastest_time": fastest_dur if fastest_dur != math.inf else 0.0
+            "fastest_time": fastest_dur if fastest_dur != math.inf else 0.0,
         }
     elif laps_timing:
         lap_items = []
@@ -449,7 +449,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
                 "start_time": 0.0,
                 "end_time": total_duration,
                 "duration": total_duration,
-                "stint": 0
+                "stint": 0,
             })
         else:
             # 1. Out Lap (if leading non-timed padding > 15.0s)
@@ -462,7 +462,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
                     "start_time": 0.0,
                     "end_time": first_start,
                     "duration": first_start,
-                    "stint": 0
+                    "stint": 0,
                 })
 
             # 2. Timed Laps
@@ -475,7 +475,7 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
                     "start_time": s,
                     "end_time": e,
                     "duration": dur,
-                    "stint": 0
+                    "stint": 0,
                 })
                 if dur < fastest_dur:
                     fastest_dur = dur
@@ -492,14 +492,14 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
                     "start_time": last_end,
                     "end_time": total_duration,
                     "duration": in_dur,
-                    "stint": 0
+                    "stint": 0,
                 })
 
         data_log.laps_info = {
             "laps": lap_items,
             "total_laps": len(lap_items),
             "fastest_lap": fastest_lap if fastest_lap is not None else 1,
-            "fastest_time": fastest_dur if fastest_dur != math.inf else 0.0
+            "fastest_time": fastest_dur if fastest_dur != math.inf else 0.0,
         }
 
     # Cleanup channels without any data

@@ -61,9 +61,9 @@ def discover_rcz_sessions(rcz_path):
                         track_name=metadata.get("trackName") or "Unknown",
                         duration_sec=float(duration_ms) / 1000.0,
                         lap_count=int(
-                            metadata.get("lapCount", len(metadata.get("laps", [])))
+                            metadata.get("lapCount", len(metadata.get("laps", []))),
                         ),
                         stints=tuple(sorted(stints)),
-                    )
+                    ),
                 )
     return sorted(sessions, key=lambda item: (item.time_created, item.prefix))

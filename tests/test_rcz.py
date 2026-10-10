@@ -230,7 +230,7 @@ def test_rcz_maps_four_wheel_speed_pids(tmp_path):
         channel = log.channels[name]
         assert channel.units == "km/h"
         np.testing.assert_allclose(
-            channel.values, [36.0, 72.0, 108.0, 144.0], atol=1e-9
+            channel.values, [36.0, 72.0, 108.0, 144.0], atol=1e-9,
         )
 
 
@@ -244,7 +244,7 @@ def test_cli_rcz_backup_lists_sessions_without_exporting():
                 source,
                 "RCZ",
                 "--list-sessions",
-            ]
+            ],
         )
 
         assert result.returncode == 0, result.stdout + result.stderr
@@ -273,7 +273,7 @@ def test_rcz_backup_target_session_reads_nested_channels_and_track_storage():
                 "lat": 37.0,
                 "lon": -122.0,
                 "type": 1,
-            }
+            },
         ]
 
         fallback_log = DataLog()
@@ -303,7 +303,7 @@ def test_cli_rcz_backup_requires_session_and_exports_selected_session():
                 "RCZ",
                 "--session",
                 "session_20260101_1000",
-            ]
+            ],
         )
         assert selected.returncode == 0, selected.stdout + selected.stderr
         ld_path = os.path.join(tmp_dir, "backup_session_20260101_1000.ld")
@@ -317,7 +317,7 @@ def test_cli_rcz_backup_requires_session_and_exports_selected_session():
                 "RCZ",
                 "--session",
                 "session_missing",
-            ]
+            ],
         )
         assert invalid.returncode == 1
         assert "Unknown RCZ session ID 'session_missing'" in invalid.stdout
@@ -335,7 +335,7 @@ def test_cli_rcz_backup_exports_all_with_preflight_and_stint_split():
                 "RCZ",
                 "--session",
                 "all",
-            ]
+            ],
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "3 succeeded, 0 failed" in result.stdout
@@ -364,7 +364,7 @@ def test_cli_rcz_backup_exports_all_with_preflight_and_stint_split():
                 "all",
                 "--output-dir",
                 output_dir,
-            ]
+            ],
         )
         assert blocked.returncode == 1
         assert "output already exists" in blocked.stdout
@@ -379,7 +379,7 @@ def test_cli_rcz_backup_exports_all_with_preflight_and_stint_split():
                 "--output-dir",
                 output_dir,
                 "--force",
-            ]
+            ],
         )
         assert forced.returncode == 0, forced.stdout + forced.stderr
 
@@ -394,7 +394,7 @@ def test_cli_rcz_backup_rejects_ambiguous_all_options():
         ]
         for options, expected in cases:
             result = _run_cli_in_process(
-                [source, "RCZ"] + options
+                [source, "RCZ"] + options,
             )
             assert result.returncode == 1
             assert expected in result.stdout
@@ -418,7 +418,7 @@ def test_cli_rcz_backup_all_continues_after_session_failure():
                         "lapCount": 0,
                         "trackName": "Broken Track",
                         "laps": [],
-                    }
+                    },
                 ),
             )
 
@@ -431,17 +431,17 @@ def test_cli_rcz_backup_all_continues_after_session_failure():
                 "all",
                 "--output-dir",
                 output_dir,
-            ]
+            ],
         )
 
         assert result.returncode == 1
         assert "3 succeeded, 1 failed" in result.stdout
         assert "session_20260103_broken stint 0 failed" in result.stdout
         assert os.path.isfile(
-            os.path.join(output_dir, "session_20260101_1000.ld")
+            os.path.join(output_dir, "session_20260101_1000.ld"),
         )
         assert not os.path.exists(
-            os.path.join(output_dir, "session_20260103_broken.ld")
+            os.path.join(output_dir, "session_20260103_broken.ld"),
         )
 
 
@@ -456,12 +456,12 @@ def test_cli_rcz_backup_selected_session_splits_multiple_stints():
                 "RCZ",
                 "--session",
                 "session_20260102_1100",
-            ]
+            ],
         )
 
         assert result.returncode == 0, result.stdout + result.stderr
         expected_stem = os.path.join(
-            tmp_dir, "backup_session_20260102_1100_stint"
+            tmp_dir, "backup_session_20260102_1100_stint",
         )
         for stint in (0, 1):
             assert os.path.isfile(expected_stem + str(stint) + ".ld")
@@ -551,7 +551,7 @@ def test_cli_rejects_invalid_min_lap_sec():
             "RCZ",
             "--min-lap-sec",
             "0",
-        ]
+        ],
     )
     assert result.returncode == 1
     assert "--min-lap-sec must be a positive finite number" in result.stdout

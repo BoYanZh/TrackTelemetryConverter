@@ -196,7 +196,7 @@ def parse_ibt_log(data_log, ibt_file_path):  # noqa: C901 - legacy branchy parse
                     "start_time": 0.0,
                     "end_time": first_t,
                     "duration": first_t,
-                    "stint": 0
+                    "stint": 0,
                 })
 
             for ci in range(len(beacons) - 1):
@@ -211,7 +211,7 @@ def parse_ibt_log(data_log, ibt_file_path):  # noqa: C901 - legacy branchy parse
                     "start_time": s_t,
                     "end_time": e_t,
                     "duration": dur,
-                    "stint": 0
+                    "stint": 0,
                 })
                 if dur < fastest_dur:
                     fastest_dur = dur
@@ -228,7 +228,7 @@ def parse_ibt_log(data_log, ibt_file_path):  # noqa: C901 - legacy branchy parse
                     "start_time": last_t,
                     "end_time": total_dur,
                     "duration": remaining,
-                    "stint": 0
+                    "stint": 0,
                 })
 
         data_log.laps_info["laps"] = lap_items

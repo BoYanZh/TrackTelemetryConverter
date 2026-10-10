@@ -36,7 +36,7 @@ channel names and units automatically where applicable.
 
 def get_rcz_stints(rcz_path, target_session=None):
     stints = set()
-    with zipfile.ZipFile(rcz_path, 'r') as z:
+    with zipfile.ZipFile(rcz_path, "r") as z:
         namelist = z.namelist()
         session_prefix = f"sessions/{target_session}/" if target_session else ""
         session_key = session_prefix + "session.json"
@@ -95,7 +95,7 @@ def parse_gear_ratio_thresholds(value):
         raise argparse.ArgumentTypeError("gear ratio thresholds must be comma-separated numbers") from exc
     if len(thresholds) != 6 or any(a <= b for a, b in zip(thresholds, thresholds[1:], strict=False)):
         raise argparse.ArgumentTypeError(
-            "gear ratio thresholds must contain six strictly descending values"
+            "gear ratio thresholds must contain six strictly descending values",
         )
     return thresholds
 
@@ -125,7 +125,7 @@ def _output_paths(args, out_base):
 def _csv_output_path(ld_filename, source_path):
     csv_filename = os.path.splitext(ld_filename)[0] + ".csv"
     if os.path.normcase(os.path.abspath(csv_filename)) == os.path.normcase(
-        os.path.abspath(source_path)
+        os.path.abspath(source_path),
     ):
         csv_filename = os.path.splitext(ld_filename)[0] + "_export.csv"
     return csv_filename
@@ -134,7 +134,7 @@ def _csv_output_path(ld_filename, source_path):
 def _vbo_output_path(ld_filename, source_path):
     vbo_filename = os.path.splitext(ld_filename)[0] + ".vbo"
     if os.path.normcase(os.path.abspath(vbo_filename)) == os.path.normcase(
-        os.path.abspath(source_path)
+        os.path.abspath(source_path),
     ):
         vbo_filename = os.path.splitext(ld_filename)[0] + "_export.vbo"
     return vbo_filename
@@ -143,7 +143,7 @@ def _vbo_output_path(ld_filename, source_path):
 def _dlap_output_path(ld_filename, source_path):
     dlap_filename = os.path.splitext(ld_filename)[0] + ".dlap"
     if os.path.normcase(os.path.abspath(dlap_filename)) == os.path.normcase(
-        os.path.abspath(source_path)
+        os.path.abspath(source_path),
     ):
         dlap_filename = os.path.splitext(ld_filename)[0] + "_export.dlap"
     return dlap_filename
@@ -315,7 +315,7 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
         driver_name = "Unknown Driver"
 
     vehicle_name = args.vehicle_id if args.vehicle_id else meta.get(
-        "vehicle_id", meta.get("Vehicle", "")
+        "vehicle_id", meta.get("Vehicle", ""),
     )
 
     motec_log = MotecLog()
@@ -352,7 +352,7 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
         print(f"Saved .ldx file: {ldx_filename}")
     except PermissionError as exc:
         raise PermissionError(
-            f"output is locked; close the file in MoTeC i2 and retry: {ld_filename}"
+            f"output is locked; close the file in MoTeC i2 and retry: {ld_filename}",
         ) from exc
 
     if args.gpx:
@@ -372,7 +372,8 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
 
     if getattr(args, "vbo", False):
         vbo_filename = _vbo_output_path(ld_filename, args.log)
-        if motec_log.write_vbo(vbo_filename, data_log):
+        columns = getattr(args, "vbo_columns_parsed", None)
+        if motec_log.write_vbo(vbo_filename, data_log, columns):
             print(f"Saved .vbo track file: {vbo_filename}")
 
     if getattr(args, "dlap", False):
@@ -417,6 +418,10 @@ def build_parser():
     parser.add_argument("--kml", action="store_true", help="Also generate KML Google Earth track file")
     parser.add_argument("--csv", action="store_true", help="Also generate CSV data file (RaceStudio / Excel import)")
     parser.add_argument("--vbo", action="store_true", help="Also generate VBO data file (Circuit Tools / GPS analysis import)")
+    parser.add_argument("--vbo-columns", metavar="COLS", default=None,
+                        help="Comma-separated VBO extra columns (default: all available). "
+                             "Each item is a VBO column name (rpm-obd), a channel name (Engine RPM), "
+                             "or CustomName=Channel Name for a custom column.")
     parser.add_argument("--dlap", action="store_true", help="Also generate Dragy DLAP archive (LapTimer / GPS analysis import)")
     parser.add_argument("--csv-wallclock", action="store_true", default=False, dest="csv_wallclock",
                         help="Write wall-clock timestamps in CSV instead of elapsed seconds")
@@ -460,6 +465,16 @@ def main(argv=None):
     if not math.isfinite(args.min_lap_sec) or args.min_lap_sec <= 0:
         print("ERROR: --min-lap-sec must be a positive finite number")
         sys.exit(1)
+
+    args.vbo_columns_parsed = None
+    if getattr(args, "vbo_columns", None):
+        from .exporters.vbo_export import parse_vbo_columns
+
+        try:
+            args.vbo_columns_parsed = parse_vbo_columns(args.vbo_columns)
+        except ValueError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(1)
 
     if args.log:
         args.log = os.path.expanduser(args.log)
@@ -541,7 +556,7 @@ def _export_rcz_backup(args, backup_sessions):
             print("ERROR: {} stint {} failed: {}".format(*failures[-1]))
 
     print(
-        f"\nRCZ backup export complete: {succeeded} succeeded, {len(failures)} failed."
+        f"\nRCZ backup export complete: {succeeded} succeeded, {len(failures)} failed.",
     )
     return 1 if failures else 0
 
@@ -627,7 +642,7 @@ def _batch_convert(args):
                     print(
                         f"Skipped: RaceChrono backup contains {len(backup_sessions)} sessions; "
                         "re-run with --session all to expand it, or convert one "
-                        "session with '--session ID' on the single file."
+                        "session with '--session ID' on the single file.",
                     )
                     skipped.append((fpath, "backup archive (use --session all)"))
                     continue
@@ -658,7 +673,7 @@ def _batch_convert(args):
 
     print("=" * 80)
     print(
-        f"Batch complete: {len(converted)} converted, {len(skipped)} skipped, {len(failed)} failed."
+        f"Batch complete: {len(converted)} converted, {len(skipped)} skipped, {len(failed)} failed.",
     )
     for fpath, reason in skipped:
         print(f"  skipped: {fpath} ({reason})")
@@ -692,14 +707,14 @@ def _convert_single_input(args):
                         session.duration_sec,
                         session.lap_count,
                         ",".join(str(value) for value in session.stints),
-                    )
+                    ),
                 )
             return 0
         if backup_sessions:
             if not args.session:
                 print(
                     f"ERROR: RaceChrono backup contains {len(backup_sessions)} sessions; use "
-                    "--list-sessions, --session ID, or --session all."
+                    "--list-sessions, --session ID, or --session all.",
                 )
                 return 1
             if str(args.session).lower() != "all":
@@ -766,5 +781,5 @@ def _convert_single_input(args):
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

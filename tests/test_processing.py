@@ -104,7 +104,7 @@ def test_gear_preserved_after_resample():
     for i in range(n):
         gear = 2 if i < n // 3 else (3 if i < 2 * n // 3 else 4)
         log.channels["Gear"].messages.append(
-            Message(float(i) * 0.05, float(gear))
+            Message(float(i) * 0.05, float(gear)),
         )
     log.resample(20)
     for m in log.channels["Gear"].messages:
@@ -121,11 +121,11 @@ def test_sector_beacons_detection():
     log.add_channel("GPS Longitude", "deg", float, 7)
     log.channels["GPS Latitude"].messages = [
         Message(0.0, 37.0002), Message(1.0, 37.0), Message(2.0, 37.0002),
-        Message(10.0, 37.0003), Message(11.0, 37.0001), Message(12.0, 37.0003)
+        Message(10.0, 37.0003), Message(11.0, 37.0001), Message(12.0, 37.0003),
     ]
     log.channels["GPS Longitude"].messages = [
         Message(0.0, -122.0002), Message(1.0, -122.0), Message(2.0, -122.0002),
-        Message(10.0, -122.0003), Message(11.0, -122.0001), Message(12.0, -122.0003)
+        Message(10.0, -122.0003), Message(11.0, -122.0001), Message(12.0, -122.0003),
     ]
     beacons = log.detect_beacons(min_speed_kmh=0.0, min_time_sec=0.0)
     assert len(beacons) >= 2
@@ -186,7 +186,7 @@ def test_gear_derivation_aligns_channels_by_timestamp():
     log.add_channel("Ground Speed", "km/h", float, 2)
     log.channels["Ground Speed"].messages = [
         Message(0.0, 30.0), Message(1.0, 30.0),
-        Message(1.0, 30.0), Message(2.0, 30.0)
+        Message(1.0, 30.0), Message(2.0, 30.0),
     ]
 
     derive_gear_from_rpm_speed(log, ratio_thresholds=DEFAULT_GEAR_RATIO_THRESHOLDS_MT)

@@ -100,9 +100,9 @@ def test_csv_middle_non_numeric_column_keeps_right_columns():
     assert "colA" in log.channels
     assert "colC" in log.channels
     assert "colB" not in log.channels
-    colC = log.channels["colC"].messages
-    assert len(colC) == 3, f"colC messages: {len(colC)}"
-    assert colC[-1].value == 300.0
+    col_c = log.channels["colC"].messages
+    assert len(col_c) == 3, f"colC messages: {len(col_c)}"
+    assert col_c[-1].value == 300.0
 
 
 def test_auto_frequency_detection():
@@ -155,13 +155,13 @@ def test_racechrono_unit_conversions():
     assert np.array_equal(log.channels["Ground Speed"].values, [36.0, 72.0])
     assert np.array_equal(log.channels["Coolant Temp"].values, [100.0, 0.0])
     assert np.allclose(
-        log.channels["Brake Press"].values, [689.476, 1378.952]
+        log.channels["Brake Press"].values, [689.476, 1378.952],
     )
     assert np.array_equal(
-        log.channels["Chassis Yaw Rate"].values, [-5.0, -6.0]
+        log.channels["Chassis Yaw Rate"].values, [-5.0, -6.0],
     )
     assert np.allclose(
-        log.channels["Vehicle Speed"].values, [96.5604, 96.5604]
+        log.channels["Vehicle Speed"].values, [96.5604, 96.5604],
     )
 
 
@@ -183,7 +183,7 @@ def test_racechrono_bar_brake_and_gyro_fallback():
         "1.0,4.0,4000.0\n",
     ])
     assert np.array_equal(
-        log.channels["Chassis Yaw Rate"].values, [-2.0, -4.0]
+        log.channels["Chassis Yaw Rate"].values, [-2.0, -4.0],
     )
 
     log = DataLog()
@@ -194,7 +194,7 @@ def test_racechrono_bar_brake_and_gyro_fallback():
         "1.0,6.0,4000.0\n",
     ])
     assert np.array_equal(
-        log.channels["Chassis Yaw Rate"].values, [-3.0, -6.0]
+        log.channels["Chassis Yaw Rate"].values, [-3.0, -6.0],
     )
 
     log = DataLog()
@@ -236,7 +236,7 @@ def test_racechrono_target_lap_and_errors(capsys):
     log = DataLog()
     log.from_racechrono_log(lines, target_lap="2")
     assert np.array_equal(
-        log.channels["Ground Speed"].timestamps, [20.0, 30.0]
+        log.channels["Ground Speed"].timestamps, [20.0, 30.0],
     )
     empty = DataLog()
     empty.from_racechrono_log([])
@@ -320,7 +320,7 @@ def test_pbbuddy_bad_epoch_and_bad_row():
     log.from_pbbuddy_log(lines)
     assert log.datetime is None
     assert np.array_equal(
-        log.channels["GPS Latitude"].values, [39.5, 39.6]
+        log.channels["GPS Latitude"].values, [39.5, 39.6],
     )
 
 
@@ -332,14 +332,14 @@ def test_racechrono_duplicate_canonical_and_row_skips():
         "1.0,,20.0\n",
         "oops,4000.0,4000.0,30.0\n",
         '"3.0",abc,6000.0,50.0\n',
-        "2.0,\"5000.0\",5000.0,40.0\n",
-        "4.0,\"\",6000.0,60.0\n",
+        '2.0,"5000.0",5000.0,40.0\n',
+        '4.0,"",6000.0,60.0\n',
     ]
     log = DataLog()
     log.from_racechrono_log(lines)
     assert np.array_equal(log.channels["Engine RPM"].values, [3000.0, 5000.0])
     assert np.array_equal(
-        log.channels["Ground Speed"].values, [36.0, 180.0, 144.0, 216.0]
+        log.channels["Ground Speed"].values, [36.0, 180.0, 144.0, 216.0],
     )
 
 

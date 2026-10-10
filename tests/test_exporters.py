@@ -144,7 +144,7 @@ def test_cli_export_flags_end_to_end():
         with tempfile.TemporaryDirectory() as tmp_dir:
             out = os.path.join(tmp_dir, "out.ld")
             result = _run_cli_in_process(
-                [source, "VBO", "--output", out, "--force", flag]
+                [source, "VBO", "--output", out, "--force", flag],
             )
             assert result.returncode == 0, result.stdout + result.stderr
             extra = os.path.splitext(out)[0] + ext

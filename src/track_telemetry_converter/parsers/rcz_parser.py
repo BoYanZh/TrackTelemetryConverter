@@ -52,7 +52,7 @@ def _set_absolute_origin(data_log, epoch_ms):
     origin_ms = int(round(float(epoch_ms)))
     data_log.time_origin_epoch_ms = origin_ms
     data_log.datetime_utc = datetime.datetime.fromtimestamp(
-        origin_ms / 1000.0, tz=datetime.timezone.utc
+        origin_ms / 1000.0, tz=datetime.timezone.utc,
     )
     # Keep the existing local-naive DataLog.datetime contract for exporters.
     data_log.datetime = datetime.datetime.fromtimestamp(origin_ms / 1000.0)
@@ -82,7 +82,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         print(f"ERROR: RCZ file {rcz_file_path} does not exist")
         return
 
-    with zipfile.ZipFile(rcz_file_path, 'r') as z:
+    with zipfile.ZipFile(rcz_file_path, "r") as z:
         all_names = z.namelist()
         session_prefix = ""
         if target_session is not None:
@@ -112,15 +112,15 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         # phone IMU keeps its own native rate.
         #   4/101 = phone IMU / secondary OBD
         #   12/* = primary OBD (car ECU via CAN)
-        _GPS_DEV_PFX = tuple(
+        _gps_dev_pfx = tuple(
             f"channel_1_{device_type}_0_"
             for device_type in ("300", "200", "100")
         )
-        _GPS_TS_KEYS = tuple(
+        _gps_ts_keys = tuple(
             f"channel_1_{device_type}_0_1_1"
             for device_type in ("300", "200", "100")
         )
-        _OBD_DEV4_TS_KEY  = "channel_4_101_0_1_1"
+        _obd_dev4_ts_key  = "channel_4_101_0_1_1"
 
         session_key = session_prefix + "session.json"
         if session_key not in all_names:
@@ -138,7 +138,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
                 traps_list = track_json.get("track", {}).get("traps", [])
             elif session_prefix and "json/track_storage.json" in all_names:
                 track_storage = json.loads(
-                    z.read("json/track_storage.json").decode("utf-8")
+                    z.read("json/track_storage.json").decode("utf-8"),
                 )
                 tracks = track_storage.get("tracks", [])
                 track = next(
@@ -177,7 +177,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         if ts_ms and ts_ms > 1e8:
             data_log.datetime = datetime.datetime.fromtimestamp(ts_ms / 1000.0)
             data_log.datetime_utc = datetime.datetime.fromtimestamp(
-                ts_ms / 1000.0, tz=datetime.timezone.utc
+                ts_ms / 1000.0, tz=datetime.timezone.utc,
             )
         else:
             data_log.datetime = data_log._extract_datetime_from_text([], rcz_file_path)
@@ -186,7 +186,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         data_log.rcz_metadata = {
             "title": session_json.get("title", ""),
             "trackName": session_json.get("trackName", ""),
-            "timeCreated": session_json.get("timeCreated", 0)
+            "timeCreated": session_json.get("timeCreated", 0),
         }
         data_log._extract_metadata([], rcz_file_path)
         if session_json.get("trackName"):
@@ -207,7 +207,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         time_file = None
         timestamps_ms = None
         epoch_reference = session_json.get("firstTimestamp") or session_json.get("timeCreated")
-        for candidate in _GPS_TS_KEYS:
+        for candidate in _gps_ts_keys:
             if candidate in namelist:
                 decoded = _decode_epoch_ms(read_channel(candidate), epoch_reference)
                 if decoded is not None:
@@ -236,7 +236,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         # Resolve the GPS channels before reconstructing laps so a recording
         # that starts at speed can be identified as a partial out lap.
         gps_prefix = None
-        for candidate_prefix in _GPS_DEV_PFX:
+        for candidate_prefix in _gps_dev_pfx:
             if any(name.startswith(candidate_prefix) for name in namelist):
                 gps_prefix = candidate_prefix
                 break
@@ -300,7 +300,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
                 print(
                     "WARNING: RCZ recording begins mid-lap at "
                     f"{gps_speed_values[0]:.1f} km/h; marking the leading segment "
-                    "as Partial Out Lap"
+                    "as Partial Out Lap",
                 )
             reconstructed_laps.append({
                 "type": out_lap_type,
@@ -309,7 +309,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
                 "start_time": 0.0,
                 "end_time": first_timed_s,
                 "duration": first_timed_s,
-                "stint": active_stint
+                "stint": active_stint,
             })
 
         # 2. Timed Laps & In Lap inside recording window
@@ -332,7 +332,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
                         "end_time": end_s,
                         "duration": dur_s,
                         "stint": active_stint,
-                        "orig_num": orig_num
+                        "orig_num": orig_num,
                     })
             else:
                 end_s = stint_duration_s
@@ -346,7 +346,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
                         "end_time": end_s,
                         "duration": dur_s,
                         "stint": active_stint,
-                        "orig_num": orig_num
+                        "orig_num": orig_num,
                     })
 
         # 3. Trailing In Lap check
@@ -361,7 +361,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
                     "start_time": (last_finish_ms - stint_start_ms) / 1000.0,
                     "end_time": stint_duration_s,
                     "duration": in_dur_s,
-                    "stint": active_stint
+                    "stint": active_stint,
                 })
 
         # Build lap_numbers array for data logging
@@ -486,7 +486,7 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
             return _relative_epoch_seconds(raw, time_origin_epoch_ms)
 
         def _parse_imu_channel(
-            ch_key, out_name, units, scale, decimals=2, ts_key=None
+            ch_key, out_name, units, scale, decimals=2, ts_key=None,
         ):
             if ch_key not in namelist:
                 return
@@ -617,20 +617,20 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  
         #         channel2_4_101_0_{pid}_3 = per-PID float64 values (same length as timestamps)
         # Device 4/type 101 uses phone-IMU channels for PIDs 7/8/49/50 - different from
         # the GR86-ECU meaning of the same PIDs on device 12/type 100.
-        _G = 9.80665
+        _g = 9.80665
         rcz_dev4_pid_overrides = {
             # PID 7 on device 4 = phone lateral accelerometer (m/s^2), NOT ECU Roll Angle
-            "7":  (CH_CG_ACCEL_LAT,     "G",    1.0 / _G, 0.0),
+            "7":  (CH_CG_ACCEL_LAT,     "G",    1.0 / _g, 0.0),
             # PID 8 on device 4 = phone vertical accelerometer (m/s^2, includes gravity) - skip
             "8":  None,
         }
-        dev4_ts_key = _OBD_DEV4_TS_KEY
+        dev4_ts_key = _obd_dev4_ts_key
         dir_prefix = os.path.dirname(dev4_ts_key)
         if any(os.path.basename(n) == os.path.basename(dev4_ts_key) and
                os.path.dirname(n) == dir_prefix for n in namelist):
             actual_key = next(
                 n for n in namelist
-                if os.path.basename(n) == os.path.basename(_OBD_DEV4_TS_KEY)
+                if os.path.basename(n) == os.path.basename(_obd_dev4_ts_key)
             )
             obd4_epoch_ms = _decode_epoch_ms(read_channel(actual_key), time_origin_epoch_ms)
             if obd4_epoch_ms is not None:

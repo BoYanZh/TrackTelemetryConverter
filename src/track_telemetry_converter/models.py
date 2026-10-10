@@ -128,7 +128,7 @@ class Channel:
                 self._timestamps = np.array([m.timestamp for m in msgs], dtype=np.float64)
                 self._values = np.array([m.value for m in msgs], dtype=np.float64)
             else:
-                self.set_samples([getattr(m, 'timestamp', 0.0) for m in msgs], [getattr(m, 'value', 0.0) for m in msgs])
+                self.set_samples([getattr(m, "timestamp", 0.0) for m in msgs], [getattr(m, "value", 0.0) for m in msgs])
 
     def start(self):
         return float(self._timestamps[0]) if len(self._timestamps) > 0 else math.inf

@@ -19,7 +19,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
     root = ET.Element("LDXFile", {
         "Locale": "English_United States.1252",
         "DefaultLocale": "C",
-        "Version": "1.6"
+        "Version": "1.6",
     })
     layers = ET.SubElement(root, "Layers")
     layer = ET.SubElement(layers, "Layer")
@@ -72,7 +72,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
             "ClassName": "BCN",
             "Name": "Finish",
             "Flags": "77",
-            "Time": f"{t_us:.17e}"
+            "Time": f"{t_us:.17e}",
         })
 
     if split_beacons:
@@ -84,7 +84,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
                 "ClassName": "BCN",
                 "Name": _clean_ascii(b_name),
                 "Flags": "77",
-                "Time": f"{t_us:.17e}"
+                "Time": f"{t_us:.17e}",
             })
 
     ET.SubElement(layer, "RangeBlock")
@@ -99,7 +99,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
                 lap_num = str(lap_data.get("lap_num", 1))
                 ET.SubElement(laps_elem, "Lap", {
                     "Id": lap_num,
-                    "Time": f"{dur_us:.17e}"
+                    "Time": f"{dur_us:.17e}",
                 })
 
     details = ET.SubElement(layers, "Details")

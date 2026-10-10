@@ -149,7 +149,7 @@ def _write_lapped_rcz(path, start_speed_mps=0.0):
         (
             np.arange(len(timestamps), dtype="<i4") + 222_000_000,
             np.arange(len(timestamps), dtype="<i4") - 732_000_000,
-        )
+        ),
     )
     session = {
         "firstTimestamp": first_timestamp,
@@ -193,7 +193,7 @@ def _write_minimal_dlap(path, n_rows=240, freq=25.0):
     """
     import zipfile
 
-    AES = _import_or_skip("Crypto.Cipher.AES")
+    aes = _import_or_skip("Crypto.Cipher.AES")
 
     dt = 1.0 / freq
     lines = []
@@ -242,7 +242,7 @@ def _write_minimal_dlap(path, n_rows=240, freq=25.0):
     obd_lines = []
     for i in range(60):
         obd_lines.append(
-            f"{i * 0.1:.3f},7.84,{3000 + i * 10},20.0,0.0,90.0,85.0,100.0"
+            f"{i * 0.1:.3f},7.84,{3000 + i * 10},20.0,0.0,90.0,85.0,100.0",
         )
     obd_text = "\n".join(obd_lines) + "\n"
 
@@ -253,9 +253,9 @@ def _write_minimal_dlap(path, n_rows=240, freq=25.0):
         inner.writestr("20261003162659.obd", obd_text)
     plain = inner_buffer.getvalue()
     pad = 16 - len(plain) % 16
-    cipher = AES.new(
+    cipher = aes.new(
         bytes.fromhex("6932466c655a6e640000000000000000"),
-        AES.MODE_CBC,
+        aes.MODE_CBC,
         bytes.fromhex("69336576386c656e0000000000000000"),
     )
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as outer:
@@ -303,7 +303,7 @@ def _write_backup_rcz(path):
                                     "centerLatitude": 222_000_000,
                                     "centerLongitude": -732_000_000,
                                     "type": 1,
-                                }
+                                },
                             ],
                         },
                         {
@@ -316,11 +316,11 @@ def _write_backup_rcz(path):
                                     "centerLatitude": 222_600_000,
                                     "centerLongitude": -731_400_000,
                                     "type": 2,
-                                }
+                                },
                             ],
                         },
-                    ]
-                }
+                    ],
+                },
             ),
         )
         for session_index, descriptor in enumerate(sessions):
@@ -356,13 +356,13 @@ def _write_backup_rcz(path):
                     dtype="<i8",
                 )
                 speed = np.full(
-                    len(timestamps), 10_000 + session_index * 1_000, dtype="<i4"
+                    len(timestamps), 10_000 + session_index * 1_000, dtype="<i4",
                 )
                 lat_lon = np.column_stack(
                     (
                         np.arange(len(timestamps), dtype="<i4") + 222_000_000,
                         np.arange(len(timestamps), dtype="<i4") - 732_000_000,
-                    )
+                    ),
                 )
                 gps_type = descriptor["gps_type"]
                 archive.writestr(

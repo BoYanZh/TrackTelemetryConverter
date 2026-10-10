@@ -74,7 +74,7 @@ def _new_aes_cipher():
     except ImportError as exc:
         raise RuntimeError(
             "Dragy .dlap export requires the 'pycryptodome' package "
-            '(pip install ".[dlap]").'
+            '(pip install ".[dlap]").',
         ) from exc
     return AES.new(
         bytes.fromhex("6932466c655a6e640000000000000000"),
@@ -98,10 +98,10 @@ def _sample_on_grid(channel, grid):
         return np.full_like(grid, vs[mask][0], dtype=np.float64)
     if channel.name in DISCRETE_CHANNELS:
         return _mask_interp_outside_range(
-            _interp_zoh(grid, ts[mask], vs[mask]), grid, ts[mask]
+            _interp_zoh(grid, ts[mask], vs[mask]), grid, ts[mask],
         )
     return _mask_interp_outside_range(
-        np.interp(grid, ts[mask], vs[mask]), grid, ts[mask]
+        np.interp(grid, ts[mask], vs[mask]), grid, ts[mask],
     )
 
 
@@ -110,7 +110,7 @@ def _session_stamp(data_log):
     origin_ms = getattr(data_log, "time_origin_epoch_ms", None)
     if origin_ms:
         moment = datetime.datetime.fromtimestamp(
-            origin_ms / 1000.0, datetime.timezone.utc
+            origin_ms / 1000.0, datetime.timezone.utc,
         )
     elif getattr(data_log, "datetime_utc", None) is not None:
         moment = data_log.datetime_utc
