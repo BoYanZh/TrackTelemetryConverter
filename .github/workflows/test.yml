@@ -40,14 +40,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Golden snapshots encode Pacific wall-clock times (all fixture tracks
     # are in California); pin the reference frame so golden_verify passes
-    # on any runner. TZ is honored on Linux; Windows needs tzutil.
+    # on any runner. TZ is honored on Linux; Windows needs the system zone
+    # via tzutil AND a blank TZ (a non-empty TZ makes the Windows CRT
+    # misparse the zone instead of using the system setting).
     env:
       TZ: America/Los_Angeles
     steps:
       - uses: actions/checkout@v7
       - name: Pin Pacific timezone (Windows)
         if: runner.os == 'Windows'
-        run: tzutil /s "Pacific Standard Time"
+        run: |
+          tzutil /s "Pacific Standard Time"
+          echo "TZ=" >> $env:GITHUB_ENV
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}

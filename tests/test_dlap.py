@@ -50,7 +50,10 @@ def test_dlap_parse_smoke():
         assert name in log.channels, f"missing channel {name}"
     assert abs(log.duration() - 240 * 0.04) < 0.5
     assert log.datetime is not None
-    assert log.datetime.strftime("%Y-%m-%d") == "2026-10-03"
+    assert log.datetime_utc is not None
+    # Absolute instant (timezone-independent); the synthetic epoch is
+    # 2026-10-03 23:26:59 UTC, which renders as Oct 4 east of UTC.
+    assert log.datetime_utc.strftime("%Y-%m-%d") == "2026-10-03"
     assert log.metadata.get("venue_name") == "Synthetic Test Track"
     assert log.metadata.get("vehicle_id") == "TestCar"
 
