@@ -40,7 +40,7 @@ def auto_detect_log_type(file_path: str) -> str:
     if path_lower.endswith(".dlap"):
         return "DLAP"
     try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
             sample = f.read(2048)
         if re.search(r"^\(\d+\.\d+\)\s+\S+\s+[0-9A-Fa-f]+#", sample, re.MULTILINE):
             return "CAN"

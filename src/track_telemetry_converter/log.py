@@ -42,7 +42,7 @@ def _parse_vbo_time(val_str):
         return 0.0
 
 
-class DataLog(object):
+class DataLog:
     channels: dict[str, Channel]
     """ Container for storing log data which contains a set of channels with time series data."""
 
@@ -457,7 +457,7 @@ class DataLog(object):
             return None, None, None, None
 
     def __str__(self):
-        output = "Log: {}, Duration: {:f} s".format(self.name, (self.end() - self.start()))
+        output = f"Log: {self.name}, Duration: {self.end() - self.start():f} s"
         for channel_data in self.channels.values():
-            output += "\n\t{}".format(channel_data)
+            output += f"\n\t{channel_data}"
         return output

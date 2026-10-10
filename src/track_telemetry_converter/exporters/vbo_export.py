@@ -215,13 +215,13 @@ def write_vbo(data_log, vbo_filename):
             mm = int((tod_s % 3600) // 60)
             ss = tod_s % 60
             row = [
-                "{:03d}".format(int(round(sats[i])) if np.isfinite(sats[i]) else 0),
-                "{:02d}{:02d}{:06.3f}".format(hh, mm, ss),
-                "{:+011.6f}".format(lat[i] * 60.0),
-                "{:+011.6f}".format(lon[i] * 60.0),
-                "{:07.3f}".format(vel[i]),
-                "{:06.2f}".format(heading[i]),
-                "{:+09.2f}".format(height[i]),
+                f"{int(round(sats[i])) if np.isfinite(sats[i]) else 0:03d}",
+                f"{hh:02d}{mm:02d}{ss:06.3f}",
+                f"{lat[i] * 60.0:+011.6f}",
+                f"{lon[i] * 60.0:+011.6f}",
+                f"{vel[i]:07.3f}",
+                f"{heading[i]:06.2f}",
+                f"{height[i]:+09.2f}",
             ]
             for _, _, fmt, vals in extras:
                 row.append(fmt(vals[i]))

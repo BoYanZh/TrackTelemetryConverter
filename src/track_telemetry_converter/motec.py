@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from .models import Channel
 
 
-class MotecLog(object):
+class MotecLog:
     """ Handles generating a MoTeC .ld file from log data.
 
     This utilizes the ldparser library for packing all the meta data and channel data into the

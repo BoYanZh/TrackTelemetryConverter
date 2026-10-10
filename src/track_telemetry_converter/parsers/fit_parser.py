@@ -93,10 +93,10 @@ def parse_fit_log(data_log, fit_file_path, target_lap=None):
     for msg in fit.get_messages("file_id"):
         serial = _fit_field(msg, "serial_number")
         if serial is not None:
-            data_log.metadata["vehicle_id"] = "Garmin S/N {}".format(serial)
+            data_log.metadata["vehicle_id"] = f"Garmin S/N {serial}"
         mfr = _fit_field(msg, "manufacturer")
         if mfr:
-            data_log.metadata["long_comment"] = "Garmin FIT (manufacturer: {})".format(mfr)
+            data_log.metadata["long_comment"] = f"Garmin FIT (manufacturer: {mfr})"
         created = _fit_field(msg, "time_created")
         if isinstance(created, datetime.datetime):
             data_log.datetime = created

@@ -348,7 +348,7 @@ def _write_backup_rcz(path):
             root = "sessions/{}/".format(descriptor["id"])
             archive.writestr(root + "session.json", json.dumps(session))
             for stint in descriptor["stints"]:
-                channel_root = root + ("resume_{}/".format(stint) if stint else "")
+                channel_root = root + (f"resume_{stint}/" if stint else "")
                 timestamps = np.arange(
                     first_timestamp,
                     first_timestamp + 61_000,
@@ -366,14 +366,14 @@ def _write_backup_rcz(path):
                 )
                 gps_type = descriptor["gps_type"]
                 archive.writestr(
-                    channel_root + "channel_1_{}_0_1_1".format(gps_type),
+                    channel_root + f"channel_1_{gps_type}_0_1_1",
                     timestamps.tobytes(),
                 )
                 archive.writestr(
-                    channel_root + "channel_1_{}_0_4_0".format(gps_type),
+                    channel_root + f"channel_1_{gps_type}_0_4_0",
                     speed.tobytes(),
                 )
                 archive.writestr(
-                    channel_root + "channel_1_{}_0_3_1".format(gps_type),
+                    channel_root + f"channel_1_{gps_type}_0_3_1",
                     lat_lon.astype("<i4").tobytes(),
                 )

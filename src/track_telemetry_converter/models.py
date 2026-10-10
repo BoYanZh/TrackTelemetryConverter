@@ -10,7 +10,7 @@ from .channels import DISCRETE_CHANNELS
 from .interpolation import _interp_zoh, _mask_interp_gaps
 
 
-class Message(object):
+class Message:
     """ A single message in a time series of data. """
 
     def __init__(self, timestamp: float = 0.0, value: float = 0.0):
@@ -18,7 +18,7 @@ class Message(object):
         self.value = float(value)
 
     def __str__(self):
-        return ("t={:f}, value={:f}".format(self.timestamp, self.value))
+        return (f"t={self.timestamp:f}, value={self.value:f}")
 
 
 class MessageListProxy(Sequence[Message]):
@@ -62,7 +62,7 @@ class MessageListProxy(Sequence[Message]):
         self._channel.add_samples(ts, vs)
 
 
-class Channel(object):
+class Channel:
     """ Represents a single channel of data containing a time series of values."""
     def __init__(self, name, units, data_type, decimals, messages=None):
         self.name = str(name).strip()

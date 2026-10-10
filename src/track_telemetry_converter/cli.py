@@ -38,7 +38,7 @@ def get_rcz_stints(rcz_path, target_session=None):
     stints = set()
     with zipfile.ZipFile(rcz_path, 'r') as z:
         namelist = z.namelist()
-        session_prefix = "sessions/{}/".format(target_session) if target_session else ""
+        session_prefix = f"sessions/{target_session}/" if target_session else ""
         session_key = session_prefix + "session.json"
         if session_key in namelist:
             session_json = json.loads(z.read(session_key).decode("utf-8"))
@@ -203,11 +203,11 @@ def process_one_file(args, stint_override=None, output_override=None,
             print("  Install with: pip install cantools")
             sys.exit(1)
 
-        with open(args.log, "r") as file:
+        with open(args.log) as file:
             lines = file.readlines()
 
         if not os.path.isfile(args.dbc):
-            print("ERROR: DBC file {} does not exist".format(args.dbc))
+            print(f"ERROR: DBC file {args.dbc} does not exist")
             sys.exit(1)
 
         print("Loading DBC...")
@@ -216,27 +216,27 @@ def process_one_file(args, stint_override=None, output_override=None,
         print("Extracting data...")
         data_log.from_can_log(lines, can_db)
     elif active_type == "CSV":
-        with open(args.log, "r", encoding="utf-8", errors="ignore") as file:
+        with open(args.log, encoding="utf-8", errors="ignore") as file:
             lines = file.readlines()
         print("Extracting data...")
         data_log.from_csv_log(lines)
     elif active_type == "ACCESSPORT":
-        with open(args.log, "r", encoding="utf-8", errors="ignore") as file:
+        with open(args.log, encoding="utf-8", errors="ignore") as file:
             lines = file.readlines()
         print("Extracting data...")
         data_log.from_accessport_log(lines)
     elif active_type == "RACECHRONO":
-        with open(args.log, "r", encoding="utf-8", errors="ignore") as file:
+        with open(args.log, encoding="utf-8", errors="ignore") as file:
             lines = file.readlines()
         print("Extracting data...")
         data_log.from_racechrono_log(lines, target_lap=args.lap)
     elif active_type == "PBBUDDY":
-        with open(args.log, "r", encoding="utf-8", errors="ignore") as file:
+        with open(args.log, encoding="utf-8", errors="ignore") as file:
             lines = file.readlines()
         print("Extracting PB Buddy data...")
         data_log.from_pbbuddy_log(lines, target_lap=args.lap)
     elif active_type == "VBO":
-        with open(args.log, "r", encoding="utf-8", errors="ignore") as file:
+        with open(args.log, encoding="utf-8", errors="ignore") as file:
             lines = file.readlines()
         print("Extracting Racelogic VBO data...")
         data_log.from_vbo_log(lines, target_lap=args.lap)
@@ -263,12 +263,12 @@ def process_one_file(args, stint_override=None, output_override=None,
         print("ERROR: Failed to find any channels in log data")
         sys.exit(1)
 
-    print("Parsed {:.1f}s log with {} channels:".format(data_log.duration(), len(data_log.channels)))
+    print(f"Parsed {data_log.duration():.1f}s log with {len(data_log.channels)} channels:")
     for channel in data_log.channels.values():
-        print("\t{}".format(channel))
+        print(f"\t{channel}")
 
     resample_freq = data_log.resample(args.frequency, mask_interp_gaps=args.mask_interp_gaps)
-    print("Resampled channels at {:.1f} Hz...".format(resample_freq))
+    print(f"Resampled channels at {resample_freq:.1f} Hz...")
 
     print("Calculating math channels (g-source: {})...".format(getattr(args, "g_source", "auto")))
     data_log.calculate_math_channels(
@@ -327,7 +327,7 @@ def process_one_file(args, stint_override=None, output_override=None,
     print("Saving MoTeC log...")
     output_dir = os.path.dirname(ld_filename)
     if output_dir and not os.path.isdir(output_dir):
-        print("Directory '{}' does not exist, will create it".format(output_dir))
+        print(f"Directory '{output_dir}' does not exist, will create it")
         os.makedirs(output_dir)
 
     ensure_output_targets(
@@ -337,32 +337,32 @@ def process_one_file(args, stint_override=None, output_override=None,
     )
     try:
         atomic_write_motec_pair(motec_log, data_log, ld_filename, ldx_filename)
-        print("Saved .ld file: {}".format(ld_filename))
-        print("Saved .ldx file: {}".format(ldx_filename))
+        print(f"Saved .ld file: {ld_filename}")
+        print(f"Saved .ldx file: {ldx_filename}")
     except PermissionError as exc:
         raise PermissionError(
-            "output is locked; close the file in MoTeC i2 and retry: {}".format(ld_filename)
+            f"output is locked; close the file in MoTeC i2 and retry: {ld_filename}"
         ) from exc
 
     if args.gpx:
         gpx_filename = os.path.splitext(ld_filename)[0] + ".gpx"
         if motec_log.write_gpx(gpx_filename, data_log):
-            print("Saved .gpx track file: {}".format(gpx_filename))
+            print(f"Saved .gpx track file: {gpx_filename}")
 
     if args.kml:
         kml_filename = os.path.splitext(ld_filename)[0] + ".kml"
         if motec_log.write_kml(kml_filename, data_log):
-            print("Saved .kml Google Earth file: {}".format(kml_filename))
+            print(f"Saved .kml Google Earth file: {kml_filename}")
 
     if args.csv:
         csv_filename = _csv_output_path(ld_filename, args.log)
         if motec_log.write_csv(csv_filename, data_log, wallclock=getattr(args, "csv_wallclock", False)):
-            print("Saved .csv data file: {}".format(csv_filename))
+            print(f"Saved .csv data file: {csv_filename}")
 
     if getattr(args, "vbo", False):
         vbo_filename = _vbo_output_path(ld_filename, args.log)
         if motec_log.write_vbo(vbo_filename, data_log):
-            print("Saved .vbo track file: {}".format(vbo_filename))
+            print(f"Saved .vbo track file: {vbo_filename}")
 
     print("Done!")
     return output_targets
@@ -437,7 +437,7 @@ def main(argv=None):
                 print("ERROR: --frequency must be positive or 'auto'")
                 sys.exit(1)
         except ValueError:
-            print("ERROR: Invalid --frequency value '{}'. Must be a number or 'auto'".format(args.frequency))
+            print(f"ERROR: Invalid --frequency value '{args.frequency}'. Must be a number or 'auto'")
             sys.exit(1)
 
     if not math.isfinite(args.min_lap_sec) or args.min_lap_sec <= 0:
@@ -453,15 +453,15 @@ def main(argv=None):
     if args.output_dir:
         args.output_dir = os.path.expanduser(args.output_dir)
     if args.log.lower().endswith(".rcz") and args.log_type != "RCZ":
-        print("WARNING: Overriding --log_type '{}' to 'RCZ' because input file has .rcz extension".format(args.log_type))
+        print(f"WARNING: Overriding --log_type '{args.log_type}' to 'RCZ' because input file has .rcz extension")
         args.log_type = "RCZ"
 
     if args.log.lower().endswith((".xrk", ".xrz")) and args.log_type != "XRK":
-        print("WARNING: Overriding --log_type '{}' to 'XRK' because input file has .xrk/.xrz extension".format(args.log_type))
+        print(f"WARNING: Overriding --log_type '{args.log_type}' to 'XRK' because input file has .xrk/.xrz extension")
         args.log_type = "XRK"
 
     if args.log.lower().endswith(".fit") and args.log_type != "FIT":
-        print("WARNING: Overriding --log_type '{}' to 'FIT' because input file has .fit extension".format(args.log_type))
+        print(f"WARNING: Overriding --log_type '{args.log_type}' to 'FIT' because input file has .fit extension")
         args.log_type = "FIT"
 
     if os.path.isdir(args.log):
@@ -488,7 +488,7 @@ def _export_rcz_backup(args, backup_sessions):
         for stint in session.stints:
             stem = session.session_id
             if len(session.stints) > 1:
-                stem += "_stint{}".format(stint)
+                stem += f"_stint{stint}"
             output_base = os.path.join(output_dir, stem)
             _, _, targets = _output_paths(args, output_base)
             jobs.append((session.session_id, stint, output_base))
@@ -500,14 +500,14 @@ def _export_rcz_backup(args, backup_sessions):
             source_path=args.log,
         )
     except (OSError, ValueError) as exc:
-        print("ERROR: {}".format(exc))
+        print(f"ERROR: {exc}")
         print("Preflight failed; no sessions were exported.")
         return 1
 
     succeeded = 0
     failures = []
     for session_id, stint, output_base in jobs:
-        print("\n=== Exporting {} stint {} ===".format(session_id, stint))
+        print(f"\n=== Exporting {session_id} stint {stint} ===")
         try:
             _process_one(
                 args,
@@ -517,16 +517,14 @@ def _export_rcz_backup(args, backup_sessions):
             )
             succeeded += 1
         except SystemExit as exc:
-            failures.append((session_id, stint, "exit code {}".format(exc.code)))
+            failures.append((session_id, stint, f"exit code {exc.code}"))
         except Exception as exc:
             failures.append((session_id, stint, str(exc)))
         if failures and failures[-1][0:2] == (session_id, stint):
             print("ERROR: {} stint {} failed: {}".format(*failures[-1]))
 
     print(
-        "\nRCZ backup export complete: {} succeeded, {} failed.".format(
-            succeeded, len(failures)
-        )
+        f"\nRCZ backup export complete: {succeeded} succeeded, {len(failures)} failed."
     )
     return 1 if failures else 0
 
@@ -598,23 +596,21 @@ def _batch_convert(args):
                 detected = auto_detect_log_type(fpath)
             file_args.log_type = detected
         print("=" * 80)
-        print("Processing [{}/{}]: {} (type: {})".format(index, len(files), fpath, detected))
+        print(f"Processing [{index}/{len(files)}]: {fpath} (type: {detected})")
 
         if fpath.lower().endswith(".rcz") and detected == "RCZ":
             try:
                 backup_sessions = discover_rcz_sessions(fpath)
             except Exception as exc:
-                print("ERROR: Failed to inspect RCZ archive: {}".format(exc))
+                print(f"ERROR: Failed to inspect RCZ archive: {exc}")
                 failed.append(fpath)
                 continue
             if backup_sessions:
                 if not expand_backups:
                     print(
-                        "Skipped: RaceChrono backup contains {} sessions; "
+                        f"Skipped: RaceChrono backup contains {len(backup_sessions)} sessions; "
                         "re-run with --session all to expand it, or convert one "
-                        "session with '--session ID' on the single file.".format(
-                            len(backup_sessions)
-                        )
+                        "session with '--session ID' on the single file."
                     )
                     skipped.append((fpath, "backup archive (use --session all)"))
                     continue
@@ -628,10 +624,10 @@ def _batch_convert(args):
                 code = _convert_single_input(file_args)
         except SystemExit as exc:
             code = exc.code if isinstance(exc.code, int) else 1
-            buffer.write("ERROR: exited with code {}\n".format(code))
+            buffer.write(f"ERROR: exited with code {code}\n")
         except Exception as exc:
             code = 1
-            buffer.write("ERROR: {}: {}\n".format(type(exc).__name__, exc))
+            buffer.write(f"ERROR: {type(exc).__name__}: {exc}\n")
         text = buffer.getvalue()
         sys.stdout.write(text)
         if not text.endswith("\n"):
@@ -645,33 +641,31 @@ def _batch_convert(args):
 
     print("=" * 80)
     print(
-        "Batch complete: {} converted, {} skipped, {} failed.".format(
-            len(converted), len(skipped), len(failed)
-        )
+        f"Batch complete: {len(converted)} converted, {len(skipped)} skipped, {len(failed)} failed."
     )
     for fpath, reason in skipped:
-        print("  skipped: {} ({})".format(fpath, reason))
+        print(f"  skipped: {fpath} ({reason})")
     for fpath in failed:
-        print("  failed: {}".format(fpath))
+        print(f"  failed: {fpath}")
     return 1 if failed else 0
 
 
 def _convert_single_input(args):
     if not os.path.isfile(args.log):
-        print("ERROR: log file {} does not exist".format(args.log))
+        print(f"ERROR: log file {args.log} does not exist")
         return 1
 
     if args.log_type == "RCZ":
         try:
             backup_sessions = discover_rcz_sessions(args.log)
         except (OSError, ValueError, zipfile.BadZipFile) as exc:
-            print("ERROR: Failed to inspect RCZ archive: {}".format(exc))
+            print(f"ERROR: Failed to inspect RCZ archive: {exc}")
             return 1
         if args.list_sessions:
             if not backup_sessions:
                 print("This RCZ contains one root session; --list-sessions is for backup archives.")
                 return 0
-            print("Found {} sessions:".format(len(backup_sessions)))
+            print(f"Found {len(backup_sessions)} sessions:")
             print("Session ID\tTrack\tDuration\tLaps\tStints")
             for session in backup_sessions:
                 print(
@@ -687,10 +681,8 @@ def _convert_single_input(args):
         if backup_sessions:
             if not args.session:
                 print(
-                    "ERROR: RaceChrono backup contains {} sessions; use "
-                    "--list-sessions, --session ID, or --session all.".format(
-                        len(backup_sessions)
-                    )
+                    f"ERROR: RaceChrono backup contains {len(backup_sessions)} sessions; use "
+                    "--list-sessions, --session ID, or --session all."
                 )
                 return 1
             if str(args.session).lower() != "all":
@@ -702,7 +694,7 @@ def _convert_single_input(args):
                     None,
                 )
                 if selected is None:
-                    print("ERROR: Unknown RCZ session ID '{}'.".format(args.session))
+                    print(f"ERROR: Unknown RCZ session ID '{args.session}'.")
                     print("Use --list-sessions to see valid IDs.")
                     return 1
                 if args.output_dir:
@@ -711,7 +703,7 @@ def _convert_single_input(args):
                 output_base = args.output
                 if not output_base:
                     backup_stem = os.path.splitext(args.log)[0]
-                    output_base = "{}_{}".format(backup_stem, selected.session_id)
+                    output_base = f"{backup_stem}_{selected.session_id}"
                 try:
                     _process_one(
                         args,
@@ -719,7 +711,7 @@ def _convert_single_input(args):
                         session_override=selected.session_id,
                     )
                 except (OSError, RuntimeError, ValueError) as exc:
-                    print("ERROR: {}".format(exc))
+                    print(f"ERROR: {exc}")
                     return 1
                 return 0
             return _export_rcz_backup(args, backup_sessions)
@@ -728,23 +720,23 @@ def _convert_single_input(args):
             return 1
 
     if args.log_type == "CAN" and not (args.dbc and os.path.isfile(args.dbc)):
-        print("ERROR: DBC file {} does not exist".format(args.dbc))
+        print(f"ERROR: DBC file {args.dbc} does not exist")
         return 1
 
     if args.log_type == "RCZ" and str(args.stint).lower() == "all":
         try:
             stints = _get_stints(args.log)
         except Exception as e:
-            print("ERROR: Failed to read RCZ stints: {}".format(e))
+            print(f"ERROR: Failed to read RCZ stints: {e}")
             return 1
 
         if len(stints) > 1:
-            print("Auto-detected {} stints in RCZ log: {}".format(len(stints), stints))
+            print(f"Auto-detected {len(stints)} stints in RCZ log: {stints}")
             base_output = args.output if args.output else args.log
             base_name, ext = os.path.splitext(base_output)
             for st in stints:
                 st_out = f"{base_name}_stint{st}"
-                print("\n=== Exporting Stint {} -> {} ===".format(st, st_out))
+                print(f"\n=== Exporting Stint {st} -> {st_out} ===")
                 _process_one(args, stint_override=str(st), output_override=st_out)
             print("Auto-stint split export complete.")
             return 0
@@ -752,7 +744,7 @@ def _convert_single_input(args):
     try:
         _process_one(args)
     except (OSError, RuntimeError, ValueError) as exc:
-        print("ERROR: {}".format(exc))
+        print(f"ERROR: {exc}")
         return 1
     return 0
 
