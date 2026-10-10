@@ -320,7 +320,174 @@ def _parse_racechrono_rows(log_lines, header_idx, col_specs, lap_number_idx, tar
     return laps_timing
 
 
-def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
+
+
+def _parse_racechrono_beacons(log_lines, header_idx):
+    """Collect beacon-marker times from pre-header lines."""
+    header_beacons = []
+    import csv
+    for line in log_lines[:header_idx]:
+        line_clean = line.strip().strip('"').strip("'")
+        try:
+            parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_clean]))]
+        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
+            parts = [p.strip().strip('"').strip("'") for p in line_clean.split(",")]
+        if parts and parts[0].lower() == "beacon markers":
+            for val in parts[1:]:
+                try:
+                    header_beacons.append(float(val))
+                except ValueError:
+                    pass
+
+    return header_beacons
+
+def _build_beacon_laps(header_beacons):
+    """Build Out/Timed/In lap items from beacon times."""
+    lap_items = []
+    fastest_lap = None
+    fastest_dur = math.inf
+    start_t = 0.0
+    total_beacons = len(header_beacons)
+    for idx, btime in enumerate(header_beacons):
+        dur = btime - start_t
+        if dur < 1.0:
+            start_t = btime
+            continue
+
+        if idx == 0:
+            if dur > 15.0:
+                lap_items.append({
+                    "type": "Out Lap",
+                    "lap_label": "Out Lap",
+                    "lap_num": len(lap_items) + 1,
+                    "start_time": start_t,
+                    "end_time": btime,
+                    "duration": dur,
+                    "stint": 0,
+                })
+        elif idx == total_beacons - 1:
+            if dur > 15.0:
+                lap_items.append({
+                    "type": "In Lap",
+                    "lap_label": "In Lap",
+                    "lap_num": len(lap_items) + 1,
+                    "start_time": start_t,
+                    "end_time": btime,
+                    "duration": dur,
+                    "stint": 0,
+                })
+        else:
+            if dur >= 15.0:
+                lap_num = len(lap_items) + 1
+                lap_items.append({
+                    "type": "Timed",
+                    "lap_label": str(lap_num),
+                    "lap_num": lap_num,
+                    "start_time": start_t,
+                    "end_time": btime,
+                    "duration": dur,
+                    "stint": 0,
+                })
+                if dur < fastest_dur:
+                    fastest_dur = dur
+                    fastest_lap = lap_num
+        start_t = btime
+    return lap_items, fastest_lap, fastest_dur
+
+def _build_timing_laps(data_log, laps_timing):
+    """Build Out/Timed/In lap items from per-lap timing metadata."""
+    lap_items = []
+    fastest_lap = None
+    fastest_dur = math.inf
+
+    def lap_key(k):
+        try:
+            return (0, int(k), "")
+        except ValueError:
+            return (1, 0, str(k))
+
+    sorted_lap_keys = sorted(laps_timing.keys(), key=lap_key)
+
+    # Determine base start time and total duration using relative timestamps
+    first_key = sorted_lap_keys[0]
+    base_time = laps_timing[first_key]["start_time"]
+
+    total_duration = 0.0
+    if data_log.channels:
+        any_ch = next(iter(data_log.channels.values()))
+        if any_ch.messages:
+            total_duration = any_ch.messages[-1].timestamp - any_ch.messages[0].timestamp
+
+    # Convert all lap start/end times to relative time from session start (0.0s)
+    rel_laps = []
+    for k in sorted_lap_keys:
+        info = laps_timing[k]
+        s_rel = info["start_time"] - base_time
+        e_rel = info["end_time"] - base_time
+        dur = e_rel - s_rel
+        rel_laps.append((k, s_rel, e_rel, dur))
+
+    # Filter valid timed laps (duration >= 20.0s)
+    valid_timed = [item for item in rel_laps if item[3] >= 20.0]
+
+    if not valid_timed:
+        # Fallback: treat entire session as 1 timed lap
+        lap_items.append({
+            "type": "Timed",
+            "lap_label": "1",
+            "lap_num": 1,
+            "start_time": 0.0,
+            "end_time": total_duration,
+            "duration": total_duration,
+            "stint": 0,
+        })
+    else:
+        # 1. Out Lap (if leading non-timed padding > 15.0s)
+        first_start = valid_timed[0][1]
+        if first_start > 15.0:
+            lap_items.append({
+                "type": "Out Lap",
+                "lap_label": "Out Lap",
+                "lap_num": 1,
+                "start_time": 0.0,
+                "end_time": first_start,
+                "duration": first_start,
+                "stint": 0,
+            })
+
+        # 2. Timed Laps
+        for k, s, e, dur in valid_timed:
+            lap_num = len(lap_items) + 1
+            lap_items.append({
+                "type": "Timed",
+                "lap_label": str(k),
+                "lap_num": lap_num,
+                "start_time": s,
+                "end_time": e,
+                "duration": dur,
+                "stint": 0,
+            })
+            if dur < fastest_dur:
+                fastest_dur = dur
+                fastest_lap = lap_num
+
+        # 3. In Lap (if trailing non-timed padding > 15.0s)
+        last_end = valid_timed[-1][2]
+        if total_duration - last_end > 15.0:
+            in_dur = total_duration - last_end
+            lap_items.append({
+                "type": "In Lap",
+                "lap_label": "In Lap",
+                "lap_num": len(lap_items) + 1,
+                "start_time": last_end,
+                "end_time": total_duration,
+                "duration": in_dur,
+                "stint": 0,
+            })
+    return lap_items, fastest_lap, fastest_dur
+
+
+def parse_racechrono_log(data_log, log_lines, target_lap=None):
     """ Creates channels populated with messages from a RaceChrono CSV log file.
 
     This maps standard RaceChrono columns to MoTeC-compatible names and units.
@@ -362,72 +529,9 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
     derive_yaw_rate_from_gps_heading(data_log)
 
     # Construct laps_info summary (with Out Lap and In Lap)
-    header_beacons = []
-    import csv
-    for line in log_lines[:header_idx]:
-        line_clean = line.strip().strip('"').strip("'")
-        try:
-            parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_clean]))]
-        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
-            parts = [p.strip().strip('"').strip("'") for p in line_clean.split(",")]
-        if parts and parts[0].lower() == "beacon markers":
-            for val in parts[1:]:
-                try:
-                    header_beacons.append(float(val))
-                except ValueError:
-                    pass
-
+    header_beacons = _parse_racechrono_beacons(log_lines, header_idx)
     if header_beacons:
-        lap_items = []
-        fastest_lap = None
-        fastest_dur = math.inf
-        start_t = 0.0
-        total_beacons = len(header_beacons)
-        for idx, btime in enumerate(header_beacons):
-            dur = btime - start_t
-            if dur < 1.0:
-                start_t = btime
-                continue
-
-            if idx == 0:
-                if dur > 15.0:
-                    lap_items.append({
-                        "type": "Out Lap",
-                        "lap_label": "Out Lap",
-                        "lap_num": len(lap_items) + 1,
-                        "start_time": start_t,
-                        "end_time": btime,
-                        "duration": dur,
-                        "stint": 0,
-                    })
-            elif idx == total_beacons - 1:
-                if dur > 15.0:
-                    lap_items.append({
-                        "type": "In Lap",
-                        "lap_label": "In Lap",
-                        "lap_num": len(lap_items) + 1,
-                        "start_time": start_t,
-                        "end_time": btime,
-                        "duration": dur,
-                        "stint": 0,
-                    })
-            else:
-                if dur >= 15.0:
-                    lap_num = len(lap_items) + 1
-                    lap_items.append({
-                        "type": "Timed",
-                        "lap_label": str(lap_num),
-                        "lap_num": lap_num,
-                        "start_time": start_t,
-                        "end_time": btime,
-                        "duration": dur,
-                        "stint": 0,
-                    })
-                    if dur < fastest_dur:
-                        fastest_dur = dur
-                        fastest_lap = lap_num
-            start_t = btime
-
+        lap_items, fastest_lap, fastest_dur = _build_beacon_laps(header_beacons)
         data_log.laps_info = {
             "laps": lap_items,
             "total_laps": len(lap_items),
@@ -435,102 +539,13 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - 
             "fastest_time": fastest_dur if fastest_dur != math.inf else 0.0,
         }
     elif laps_timing:
-        lap_items = []
-        fastest_lap = None
-        fastest_dur = math.inf
-
-        def lap_key(k):
-            try:
-                return (0, int(k), "")
-            except ValueError:
-                return (1, 0, str(k))
-
-        sorted_lap_keys = sorted(laps_timing.keys(), key=lap_key)
-
-        # Determine base start time and total duration using relative timestamps
-        first_key = sorted_lap_keys[0]
-        base_time = laps_timing[first_key]["start_time"]
-
-        total_duration = 0.0
-        if data_log.channels:
-            any_ch = next(iter(data_log.channels.values()))
-            if any_ch.messages:
-                total_duration = any_ch.messages[-1].timestamp - any_ch.messages[0].timestamp
-
-        # Convert all lap start/end times to relative time from session start (0.0s)
-        rel_laps = []
-        for k in sorted_lap_keys:
-            info = laps_timing[k]
-            s_rel = info["start_time"] - base_time
-            e_rel = info["end_time"] - base_time
-            dur = e_rel - s_rel
-            rel_laps.append((k, s_rel, e_rel, dur))
-
-        # Filter valid timed laps (duration >= 20.0s)
-        valid_timed = [item for item in rel_laps if item[3] >= 20.0]
-
-        if not valid_timed:
-            # Fallback: treat entire session as 1 timed lap
-            lap_items.append({
-                "type": "Timed",
-                "lap_label": "1",
-                "lap_num": 1,
-                "start_time": 0.0,
-                "end_time": total_duration,
-                "duration": total_duration,
-                "stint": 0,
-            })
-        else:
-            # 1. Out Lap (if leading non-timed padding > 15.0s)
-            first_start = valid_timed[0][1]
-            if first_start > 15.0:
-                lap_items.append({
-                    "type": "Out Lap",
-                    "lap_label": "Out Lap",
-                    "lap_num": 1,
-                    "start_time": 0.0,
-                    "end_time": first_start,
-                    "duration": first_start,
-                    "stint": 0,
-                })
-
-            # 2. Timed Laps
-            for k, s, e, dur in valid_timed:
-                lap_num = len(lap_items) + 1
-                lap_items.append({
-                    "type": "Timed",
-                    "lap_label": str(k),
-                    "lap_num": lap_num,
-                    "start_time": s,
-                    "end_time": e,
-                    "duration": dur,
-                    "stint": 0,
-                })
-                if dur < fastest_dur:
-                    fastest_dur = dur
-                    fastest_lap = lap_num
-
-            # 3. In Lap (if trailing non-timed padding > 15.0s)
-            last_end = valid_timed[-1][2]
-            if total_duration - last_end > 15.0:
-                in_dur = total_duration - last_end
-                lap_items.append({
-                    "type": "In Lap",
-                    "lap_label": "In Lap",
-                    "lap_num": len(lap_items) + 1,
-                    "start_time": last_end,
-                    "end_time": total_duration,
-                    "duration": in_dur,
-                    "stint": 0,
-                })
-
+        lap_items, fastest_lap, fastest_dur = _build_timing_laps(data_log, laps_timing)
         data_log.laps_info = {
             "laps": lap_items,
             "total_laps": len(lap_items),
             "fastest_lap": fastest_lap if fastest_lap is not None else 1,
             "fastest_time": fastest_dur if fastest_dur != math.inf else 0.0,
         }
-
     # Cleanup channels without any data
     empty_channels = [name for name, ch in data_log.channels.items() if not ch.messages]
     for name in empty_channels:
