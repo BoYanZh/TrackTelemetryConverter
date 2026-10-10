@@ -59,7 +59,7 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
             try:
                 data_log.datetime = datetime.datetime.strptime(f"{d_str} {t_str}", "%d/%m/%Y %H:%M:%S")
             except Exception:
-                pass
+                print(f"WARNING: Could not parse VBO header date: {d_str} {t_str}")
 
     cols_raw = sections.get("column names", [""])[0].split()
     data_lines = [line for line in sections.get("data", []) if line]

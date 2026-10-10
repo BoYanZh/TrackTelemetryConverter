@@ -17,7 +17,7 @@ from ..channels import (
 from ..models import Message
 
 
-def parse_pbbuddy_log(data_log, log_lines, target_lap=None):
+def parse_pbbuddy_log(data_log, log_lines, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
     """ Creates channels populated with messages from a PB Buddy CSV log file. """
     data_log.clear()
     data_log.laps_info = {}
@@ -76,19 +76,21 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):
                 offset_sec = float(data_log.metadata["Timezone offset, milliseconds"]) / 1000.0
             dt = datetime.datetime.fromtimestamp(epoch + offset_sec, tz=datetime.timezone.utc).replace(tzinfo=None)
         except Exception:
-            pass
+            print("WARNING: Could not parse PB Buddy session epoch metadata")
 
     if dt is None:
+        import contextlib
+
         date_str = data_log.metadata.get("date") or data_log.metadata.get("Date") or data_log.metadata.get("Session start date, local timezone, YYYYMMDD")
         time_str = data_log.metadata.get("time") or data_log.metadata.get("Time")
         if date_str and time_str:
             dt_str = f"{date_str} {time_str}".strip()
             for fmt in ("%m/%d/%Y %H:%M:%S", "%m/%d/%y %H:%M:%S", "%Y%m%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-                try:
+                with contextlib.suppress(Exception):
                     dt = datetime.datetime.strptime(dt_str, fmt)
                     break
-                except Exception:
-                    pass
+            if dt is None:
+                print(f"WARNING: Could not parse PB Buddy date/time: {dt_str!r}")
 
     if dt:
         data_log.datetime = dt

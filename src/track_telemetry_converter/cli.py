@@ -141,7 +141,7 @@ def _vbo_output_path(ld_filename, source_path):
 _auto_detect_log_type = auto_detect_log_type
 
 
-def process_one_file(args, stint_override=None, output_override=None,
+def process_one_file(args, stint_override=None, output_override=None,  # noqa: C901 - orchestration entry; split when extending
                      session_override=None):
     stint_arg = stint_override if stint_override is not None else args.stint
     out_base = output_override if output_override is not None else args.output

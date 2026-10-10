@@ -50,7 +50,7 @@ _FIT_CHANNEL_MAP = {
 }
 
 
-def parse_fit_log(data_log, fit_file_path, target_lap=None):
+def parse_fit_log(data_log, fit_file_path, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
     """ Creates channels populated with messages from a Garmin .fit log file. """
     try:
         import fitparse

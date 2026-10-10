@@ -10,7 +10,7 @@ from ..channels import CH_LAP_NUMBER, IBT_BRAKE_PRESS_MAP, IBT_CHANNEL_MAP, IBT_
 from ..models import Message
 
 
-def parse_ibt_log(data_log, ibt_file_path):
+def parse_ibt_log(data_log, ibt_file_path):  # noqa: C901 - legacy branchy parser; split when extending
     """ Creates channels populated with messages from an iRacing native .ibt binary telemetry file.
 
     The .ibt format consists of:
@@ -89,7 +89,7 @@ def parse_ibt_log(data_log, ibt_file_path):
             import datetime as _dt
             sess_dt = _dt.datetime.strptime(weekend_date, "%Y-%m-%d")
         except Exception:
-            pass
+            print(f"WARNING: Could not parse IBT session date: {weekend_date!r}")
 
     data_log.metadata["venue_name"] = venue
     data_log.metadata["driver"] = driver

@@ -47,7 +47,7 @@ def _norm_header(name):
     return name.lower().strip().replace("_", " ").replace("-", " ")
 
 
-def parse_racechrono_log(data_log, log_lines, target_lap=None):
+def parse_racechrono_log(data_log, log_lines, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
     """ Creates channels populated with messages from a RaceChrono CSV log file.
 
     This maps standard RaceChrono columns to MoTeC-compatible names and units.

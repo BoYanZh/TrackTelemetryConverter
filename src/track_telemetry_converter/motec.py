@@ -103,7 +103,8 @@ class MotecLog:
         n = len(self.ld_channels)
         if n == 0:
             return
-        assert self.ld_header is not None, "initialize() must be called before writing"
+        if self.ld_header is None:
+            raise RuntimeError("initialize() must be called before writing")
 
         meta_base = self.HEADER_PTR
         for i, ch in enumerate(self.ld_channels):
@@ -115,21 +116,23 @@ class MotecLog:
         self.ld_header.data_ptr = data_ptr
         for ch in self.ld_channels:
             ch.data_ptr = data_ptr
-            assert ch._data is not None, "channel data must be set before writing"
+            if ch._data is None:
+                raise RuntimeError("channel data must be set before writing")
             data_ptr += ch._data.nbytes
 
         # Validate pointer layout integrity before serialization
-        assert self.ld_header.data_ptr >= self.HEADER_PTR + n * self.CHANNEL_HEADER_SIZE, (
-            "Data pointer overlaps with channel headers"
-        )
+        if not self.ld_header.data_ptr >= self.HEADER_PTR + n * self.CHANNEL_HEADER_SIZE:
+            raise RuntimeError("Data pointer overlaps with channel headers")
         for i, ch in enumerate(self.ld_channels):
-            assert ch.meta_ptr == meta_base + i * self.CHANNEL_HEADER_SIZE
-            if i < n - 1:
-                assert ch.next_meta_ptr == ch.meta_ptr + self.CHANNEL_HEADER_SIZE
+            if ch.meta_ptr != meta_base + i * self.CHANNEL_HEADER_SIZE:
+                raise RuntimeError("Channel header pointer mismatch")
+            if i < n - 1 and ch.next_meta_ptr != ch.meta_ptr + self.CHANNEL_HEADER_SIZE:
+                raise RuntimeError("Channel header chain mismatch")
 
     def write(self, filename):
         if not self.ld_channels:
-            assert self.ld_header is not None, "initialize() must be called before writing"
+            if self.ld_header is None:
+                raise RuntimeError("initialize() must be called before writing")
             with open(filename, "wb") as f:
                 self.ld_header.write(f, 0)
             return

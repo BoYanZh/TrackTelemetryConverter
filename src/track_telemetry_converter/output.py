@@ -60,7 +60,7 @@ def verify_motec_pair(ld_path, ldx_path, expected_channels):
                 f"MoTeC verification failed: channel {actual.name!r} data changed on write"
             )
 
-    root = ET.parse(ldx_path).getroot()
+    root = ET.parse(ldx_path).getroot()  # noqa: S314 - verifies our own just-written file
     if root.tag != "LDXFile":
         raise RuntimeError(f"LDX verification failed: unexpected root element {root.tag!r}")
     for marker_group in root.findall(".//MarkerGroup"):

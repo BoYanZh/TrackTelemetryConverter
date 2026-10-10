@@ -55,5 +55,5 @@ def auto_detect_log_type(file_path: str) -> str:
         if "Time (sec)" in sample or "AP Info" in sample:
             return "ACCESSPORT"
     except Exception:
-        pass
+        print("WARNING: Could not sniff log format; falling back to CSV")
     return "CSV"

@@ -63,8 +63,14 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C901"]
 ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S314", "S603"]
 
 [tool.pyright]
 # Vendored third-party binary-format reader ships without type

@@ -58,7 +58,7 @@ def _set_absolute_origin(data_log, epoch_ms):
     data_log.datetime = datetime.datetime.fromtimestamp(origin_ms / 1000.0)
 
 
-def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
+def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,  # noqa: C901 - legacy branchy parser; split when extending
                   min_lap_sec=15.0, mask_interp_gaps=False,
                   target_session=None):
     """ Creates channels populated with messages directly from a RaceChrono .rcz archive.

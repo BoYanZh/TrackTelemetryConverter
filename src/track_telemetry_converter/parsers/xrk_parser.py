@@ -89,7 +89,7 @@ def _parse_log_datetime(meta):
     return None
 
 
-def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
+def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
     """ Creates channels populated with messages from an AIM .xrk/.xrz log file. """
     try:
         from libxrk import aim_xrk
@@ -143,7 +143,7 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
             if lap_starts:
                 origins_ms.append(float(min(lap_starts)))
         except Exception:
-            pass
+            print("WARNING: Could not read XRK lap origins; using channel clocks only")
     global_t0_ms = min(origins_ms) if origins_ms else 0.0
     aliases_casefold = {str(key).strip().casefold(): value for key, value in CHANNEL_ALIASES.items()}
 
