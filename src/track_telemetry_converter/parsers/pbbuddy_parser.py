@@ -17,43 +17,35 @@ from ..channels import (
 from ..models import Message
 
 
-def parse_pbbuddy_log(data_log, log_lines, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
-    """ Creates channels populated with messages from a PB Buddy CSV log file. """
-    data_log.clear()
-    data_log.laps_info = {}
-
-    if not log_lines:
-        return
-
+def _split_csv_line(line):
     import csv
 
-    # 1. Scan for Data Header Line (contains >= 3 columns and starts with Time/timestamp)
-    data_header_idx = -1
+    try:
+        return [p.strip().strip('"').strip("'") for p in next(csv.reader([line]))]
+    except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
+        return [p.strip().strip('"').strip("'") for p in line.split(",")]
+
+
+def _find_data_header(log_lines):
+    """Return the index of the Time/... header row, or -1 if absent."""
     for i, line in enumerate(log_lines):
         line_clean = line.strip().strip('"').strip("'")
         if not line_clean:
             continue
-        try:
-            parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_clean]))]
-        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
-            parts = [p.strip().strip('"').strip("'") for p in line_clean.split(",")]
+        parts = _split_csv_line(line_clean)
         if len(parts) >= 3 and parts[0].lower() in ("time", "time (s)", "timestamp"):
-            data_header_idx = i
-            break
+            return i
+    print("ERROR: Could not locate PB Buddy CSV data header line.")
+    return -1
 
-    if data_header_idx == -1:
-        print("ERROR: Could not locate PB Buddy CSV data header line.")
-        return
 
-    # 2. Process all lines BEFORE Data Header Line as Key-Value Metadata
+def _parse_metadata_block(data_log, log_lines, data_header_idx):
+    """Process Key-Value metadata lines before the data header."""
     for line in log_lines[:data_header_idx]:
         line_s = line.strip()
         if not line_s:
             continue
-        try:
-            parts = [p.strip().strip('"').strip("'") for p in next(csv.reader([line_s]))]
-        except Exception:  # pragma: no cover - csv.reader rarely raises; split fallback
-            parts = [p.strip().strip('"').strip("'") for p in line_s.split(",")]
+        parts = _split_csv_line(line_s)
         if len(parts) == 2:
             key, val = parts[0], parts[1]
             data_log.metadata[key] = val
@@ -66,7 +58,9 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):  # noqa: C901 - leg
             elif key == "Session name":
                 data_log.metadata["session"] = val
 
-    # Extract datetime from PB Buddy epoch + timezone offset or Date/Time fields
+
+def _parse_session_datetime(data_log):
+    """Extract session datetime from epoch metadata or Date/Time fields."""
     dt = None
     if "Session start, seconds since epoch" in data_log.metadata:
         try:
@@ -95,17 +89,9 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):  # noqa: C901 - leg
     if dt:
         data_log.datetime = dt
 
-    # 3. Read Headers and Units Row
-    header_line = log_lines[data_header_idx].strip()
-    headers = [h.strip().strip('"').strip("'") for h in header_line.split(",")]
 
-    units = []
-    if data_header_idx + 1 < len(log_lines):
-        next_line = log_lines[data_header_idx + 1].strip()
-        unit_parts = [u.strip().strip('"').strip("'") for u in next_line.split(",")]
-        if unit_parts and unit_parts[0].lower() in ("sec", "s", "seconds", "m/s", "deg", "m"):
-            units = unit_parts
-
+def _build_channel_index(data_log, headers, units):
+    """Map column positions to (source name, output channel) pairs."""
     mapping = {
         "Time": ("Time", "s", 3),
         CH_GPS_LATITUDE: (CH_GPS_LATITUDE, "deg", 7),
@@ -118,7 +104,6 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):  # noqa: C901 - leg
         "Lap": (CH_LAP_NUMBER, "", 0),
         CH_LAP_NUMBER: (CH_LAP_NUMBER, "", 0),
     }
-
     chan_indices = {}
     for idx, h in enumerate(headers):
         if h in mapping:
@@ -129,10 +114,12 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):  # noqa: C901 - leg
             unit = units[idx] if idx < len(units) else ""
             data_log.add_channel(h, unit, float, 3)
             chan_indices[idx] = (h, h)
+    return chan_indices
 
-    # 4. Parse Data Rows
-    start_data_idx = data_header_idx + (2 if units else 1)
-    for line in log_lines[start_data_idx:]:
+
+def _parse_data_rows(data_log, log_lines, start_idx, headers, chan_indices):
+    """Append samples for data rows, skipping comments and bad values."""
+    for line in log_lines[start_idx:]:
         line_s = line.strip()
         if not line_s or line_s.startswith("//") or line_s.startswith("#"):
             continue
@@ -147,3 +134,40 @@ def parse_pbbuddy_log(data_log, log_lines, target_lap=None):  # noqa: C901 - leg
                     data_log.channels[out_name].messages.append(Message(t, val))
             except ValueError:
                 continue
+
+
+def parse_pbbuddy_log(data_log, log_lines, target_lap=None):
+    """ Creates channels populated with messages from a PB Buddy CSV log file. """
+    data_log.clear()
+    data_log.laps_info = {}
+
+    if not log_lines:
+        return
+
+    # 1. Scan for Data Header Line (contains >= 3 columns and starts with Time/timestamp)
+    data_header_idx = _find_data_header(log_lines)
+    if data_header_idx == -1:
+        return
+
+    # 2. Process all lines BEFORE Data Header Line as Key-Value Metadata
+    _parse_metadata_block(data_log, log_lines, data_header_idx)
+
+    # Extract datetime from PB Buddy epoch + timezone offset or Date/Time fields
+    _parse_session_datetime(data_log)
+
+    # 3. Read Headers and Units Row
+    header_line = log_lines[data_header_idx].strip()
+    headers = [h.strip().strip('"').strip("'") for h in header_line.split(",")]
+
+    units = []
+    if data_header_idx + 1 < len(log_lines):
+        next_line = log_lines[data_header_idx + 1].strip()
+        unit_parts = [u.strip().strip('"').strip("'") for u in next_line.split(",")]
+        if unit_parts and unit_parts[0].lower() in ("sec", "s", "seconds", "m/s", "deg", "m"):
+            units = unit_parts
+
+    chan_indices = _build_channel_index(data_log, headers, units)
+
+    # 4. Parse Data Rows
+    start_data_idx = data_header_idx + (2 if units else 1)
+    _parse_data_rows(data_log, log_lines, start_data_idx, headers, chan_indices)

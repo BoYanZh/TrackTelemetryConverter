@@ -89,23 +89,8 @@ def _parse_log_datetime(meta):
     return None
 
 
-def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
-    """ Creates channels populated with messages from an AIM .xrk/.xrz log file. """
-    try:
-        from libxrk import aim_xrk
-        from libxrk.base import ChannelMetadata
-    except ImportError:
-        print("ERROR: 'libxrk' package is required for XRK/XRZ log processing.")
-        print("  Install with: pip install libxrk")
-        return
-
-    data_log.clear()
-    data_log.laps_info = {}
-
-    log = aim_xrk(xrk_file_path)
-
-    # ---- metadata ----
-    meta = getattr(log, "metadata", {}) or {}
+def _apply_xrk_metadata(data_log, meta):
+    """Copy venue/driver/vehicle/comment metadata and session datetime."""
     venue = str(meta.get("venue", meta.get("Venue", meta.get("track", "")))).strip()
     if venue:
         data_log.metadata["venue_name"] = venue
@@ -121,12 +106,14 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - leg
 
     data_log.datetime = _parse_log_datetime(meta)
 
-    raw_channels = log.channels or {}
-    laps = getattr(log, "laps", None)
 
-    # AIM channel and lap timecodes share one log-relative millisecond clock.
-    # Preserve their offsets by selecting one global origin for the session.
-    # See docs/research/libxrk-0.13-timestamp-semantics.md for details on libxrk>=0.13 clock unwrapping.
+def _compute_origin_ms(raw_channels, laps):
+    """Select one global millisecond origin for channels and laps.
+
+    AIM channel and lap timecodes share one log-relative millisecond clock.
+    Preserve their offsets by selecting one global origin for the session.
+    See docs/research/libxrk-0.13-timestamp-semantics.md for details on libxrk>=0.13 clock unwrapping.
+    """
     origins_ms = []
     for table in raw_channels.values():
         if table is None or table.num_rows == 0:
@@ -144,38 +131,52 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - leg
                 origins_ms.append(float(min(lap_starts)))
         except Exception:
             print("WARNING: Could not read XRK lap origins; using channel clocks only")
-    global_t0_ms = min(origins_ms) if origins_ms else 0.0
-    aliases_casefold = {str(key).strip().casefold(): value for key, value in CHANNEL_ALIASES.items()}
+    return min(origins_ms) if origins_ms else 0.0
 
-    # ---- channels ----
+
+def _resolve_alias(ch_name, aliases_casefold):
+    """Map an XRK channel name to its (name, unit, decimals) alias."""
+    alias = CHANNEL_ALIASES.get(ch_name)
+    if alias is None:
+        alias = aliases_casefold.get(ch_name.strip().casefold())
+    return alias
+
+
+def _read_channel_samples(table, ch_name):
+    """Return (timecodes_ms, values) arrays, or None when unreadable/empty."""
+    try:
+        timecodes_ms = np.asarray(table.column("timecodes").to_numpy(), dtype=np.float64)
+        values = np.asarray(table.column(ch_name).to_numpy(zero_copy_only=False), dtype=np.float64)
+    except (KeyError, ValueError, TypeError):
+        return None
+    valid = np.isfinite(timecodes_ms) & np.isfinite(values)
+    if not np.any(valid):
+        return None
+    return timecodes_ms[valid], values[valid]
+
+
+def _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, channel_metadata_cls):
+    """Populate channels from XRK channel tables."""
     for ch_name, table in raw_channels.items():
         if ch_name is None or table is None or table.num_rows == 0:
             continue
         if ch_name.lower() == "timecodes":
             continue
 
-        alias = CHANNEL_ALIASES.get(ch_name)
-        if alias is None:
-            alias = aliases_casefold.get(ch_name.strip().casefold())
+        alias = _resolve_alias(ch_name, aliases_casefold)
         if alias is None:
             continue
 
         out_name, unit, dec = alias
         try:
-            meta_obj = ChannelMetadata.from_channel_table(table)
+            meta_obj = channel_metadata_cls.from_channel_table(table)
         except Exception:
             meta_obj = None
 
-        try:
-            timecodes_ms = np.asarray(table.column("timecodes").to_numpy(), dtype=np.float64)
-            values = np.asarray(table.column(ch_name).to_numpy(zero_copy_only=False), dtype=np.float64)
-        except (KeyError, ValueError, TypeError):
+        samples = _read_channel_samples(table, ch_name)
+        if samples is None:
             continue
-        valid = np.isfinite(timecodes_ms) & np.isfinite(values)
-        if not np.any(valid):
-            continue
-        timecodes_ms = timecodes_ms[valid]
-        values = values[valid]
+        timecodes_ms, values = samples
 
         source_unit = getattr(meta_obj, "units", "") if meta_obj is not None else ""
         values = _convert_values(values, source_unit, unit)
@@ -189,7 +190,9 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - leg
 
         data_log.channels[out_name].set_samples(timestamps, values)
 
-    # ---- laps ----
+
+def _parse_xrk_laps(laps, global_t0_ms):
+    """Build laps_info from the XRK laps table (empty when unavailable)."""
     laps_info = {"laps": [], "total_laps": 0, "fastest_time": 0.0}
     try:
         if laps is not None and laps.num_rows > 0:
@@ -217,21 +220,59 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - leg
             laps_info["beacons"] = sorted(beacons, key=lambda item: item[0])
     except Exception as e:
         print(f"WARNING: Failed to parse XRK laps: {e}")
+    return laps_info
+
+
+def _filter_xrk_lap(data_log, laps_info, target_lap):
+    """Keep channel samples within the requested lap window."""
+    if target_lap is None or str(target_lap).lower() == "all":
+        return
+    try:
+        lap_no = int(target_lap)
+        lap_recs = [lap for lap in laps_info["laps"] if lap["lap_num"] == lap_no]
+        if lap_recs:
+            t_lo = lap_recs[0]["start_time"]
+            t_hi = lap_recs[0]["end_time"]
+            for name in list(data_log.channels):
+                ch = data_log.channels[name]
+                ch.messages = [m for m in ch.messages if t_lo <= m.timestamp <= t_hi]
+        else:
+            print(f"WARNING: Lap '{target_lap}' not found in XRK file; keeping all laps")
+    except (ValueError, IndexError):
+        print(f"WARNING: Lap '{target_lap}' not found in XRK file; keeping all laps")
+
+
+def parse_xrk_log(data_log, xrk_file_path, target_lap=None):  # noqa: C901 - legacy branchy parser; split when extending
+    """ Creates channels populated with messages from an AIM .xrk/.xrz log file. """
+    try:
+        from libxrk import aim_xrk
+        from libxrk.base import ChannelMetadata
+    except ImportError:
+        print("ERROR: 'libxrk' package is required for XRK/XRZ log processing.")
+        print("  Install with: pip install libxrk")
+        return
+
+    data_log.clear()
+    data_log.laps_info = {}
+
+    log = aim_xrk(xrk_file_path)
+
+    # ---- metadata ----
+    meta = getattr(log, "metadata", {}) or {}
+    _apply_xrk_metadata(data_log, meta)
+
+    raw_channels = log.channels or {}
+    laps = getattr(log, "laps", None)
+    global_t0_ms = _compute_origin_ms(raw_channels, laps)
+    aliases_casefold = {str(key).strip().casefold(): value for key, value in CHANNEL_ALIASES.items()}
+
+    # ---- channels ----
+    _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, ChannelMetadata)
+
+    # ---- laps ----
+    laps_info = _parse_xrk_laps(laps, global_t0_ms)
 
     # lap filtering: keep channels within the requested lap window
-    if target_lap is not None and str(target_lap).lower() != "all":
-        try:
-            lap_no = int(target_lap)
-            lap_recs = [lap for lap in laps_info["laps"] if lap["lap_num"] == lap_no]
-            if lap_recs:
-                t_lo = lap_recs[0]["start_time"]
-                t_hi = lap_recs[0]["end_time"]
-                for name in list(data_log.channels):
-                    ch = data_log.channels[name]
-                    ch.messages = [m for m in ch.messages if t_lo <= m.timestamp <= t_hi]
-            else:
-                print(f"WARNING: Lap '{target_lap}' not found in XRK file; keeping all laps")
-        except (ValueError, IndexError):
-            print(f"WARNING: Lap '{target_lap}' not found in XRK file; keeping all laps")
+    _filter_xrk_lap(data_log, laps_info, target_lap)
 
     data_log.laps_info = laps_info
