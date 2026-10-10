@@ -138,7 +138,7 @@ Run `track-telemetry --help` for the authoritative option list.
 - `--g-source {auto,sensor,calc}` selects hardware or GPS-derived G channels.
 - `--mask-interp-gaps` leaves long sampling gaps as `NaN` instead of bridging
   them.
-- `--csv`, `--vbo`, `--gpx`, and `--kml` add optional exports.
+- `--csv`, `--vbo`, `--dlap`, `--gpx`, and `--kml` add optional exports.
 
 ## Project layout
 

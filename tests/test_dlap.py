@@ -10,6 +10,7 @@ from conftest import (
 )
 
 from track_telemetry_converter.log import DataLog
+from track_telemetry_converter.models import Message
 from track_telemetry_converter.parsers import auto_detect_log_type
 
 EXPECTED_GPS = (
@@ -108,3 +109,96 @@ def test_dlap_requires_crypto(monkeypatch):
             assert "pycryptodome" in str(exc)
         else:
             raise AssertionError("expected RuntimeError without Crypto")
+
+
+def _resampled_minimal_dlap():
+    from track_telemetry_converter.exporters.dlap_export import write_dlap
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "session.dlap")
+        _write_minimal_dlap(path)
+        log = DataLog()
+        log.from_dlap_log(path)
+        _dedup_channels(log)
+        log.resample(25)
+        out = os.path.join(tmp_dir, "roundtrip.dlap")
+        assert write_dlap(log, out)
+        reparsed = DataLog()
+        reparsed.from_dlap_log(out)
+        _dedup_channels(reparsed)
+        return log, reparsed
+
+
+def test_dlap_export_roundtrip():
+    import numpy as np
+
+    log, reparsed = _resampled_minimal_dlap()
+    for name in ("Ground Speed", "GPS Latitude", "GPS Longitude"):
+        assert name in reparsed.channels, f"missing channel {name}"
+        original = np.asarray(log.channels[name].values)
+        back = np.asarray(reparsed.channels[name].values)
+        assert len(back) == len(original)
+        assert np.allclose(back, original, atol=0.01, equal_nan=True)
+    # OBD covers only part of the session: values must match where present
+    # and stay NaN outside the recorded window (no forward-fill).
+    original = np.asarray(log.channels["Engine RPM"].values)
+    back = np.asarray(reparsed.channels["Engine RPM"].values)
+    assert len(back) == len(original)
+    finite = np.isfinite(back)
+    assert 0 < finite.sum() < len(back)
+    assert np.allclose(back[finite], original[finite], atol=0.05)
+    assert reparsed.laps_info["total_laps"] == 2
+    assert reparsed.datetime_utc == log.datetime_utc
+
+
+def test_dlap_export_requires_gps():
+    from track_telemetry_converter.exporters.dlap_export import write_dlap
+
+    log = DataLog()
+    log.add_channel("Engine RPM", "rpm", float, 0)
+    log.channels["Engine RPM"].messages = [Message(0.0, 3000.0)]
+    with tempfile.NamedTemporaryFile(suffix=".dlap", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        assert not write_dlap(log, tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def test_dlap_export_without_obd():
+    import zipfile
+
+    from track_telemetry_converter.exporters.dlap_export import write_dlap
+
+    log = DataLog()
+    log.add_channel("Ground Speed", "km/h", float, 2)
+    log.channels["Ground Speed"].messages = [Message(i * 0.04, 50.0) for i in range(50)]
+    log.add_channel("GPS Latitude", "deg", float, 7)
+    log.channels["GPS Latitude"].messages = [Message(i * 0.04, 39.5) for i in range(50)]
+    log.add_channel("GPS Longitude", "deg", float, 7)
+    log.channels["GPS Longitude"].messages = [Message(i * 0.04, -122.3) for i in range(50)]
+    log.resample(25)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out = os.path.join(tmp_dir, "noobd.dlap")
+        assert write_dlap(log, out)
+        with zipfile.ZipFile(out) as outer:
+            assert len(outer.namelist()) == 1
+        reparsed = DataLog()
+        reparsed.from_dlap_log(out)
+        assert "Ground Speed" in reparsed.channels
+        assert "Engine RPM" not in reparsed.channels
+
+
+def test_cli_dlap_flag_and_source_guard():
+    from conftest import _run_cli_in_process
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        src = os.path.join(tmp_dir, "in.dlap")
+        _write_minimal_dlap(src)
+        result = _run_cli_in_process(
+            [src, "DLAP", "--output", os.path.join(tmp_dir, "in"), "--dlap"]
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert os.path.isfile(os.path.join(tmp_dir, "in_export.dlap"))
+        assert "Saved .dlap track file" in result.stdout

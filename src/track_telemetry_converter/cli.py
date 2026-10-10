@@ -117,6 +117,8 @@ def _output_paths(args, out_base):
         targets.append(_csv_output_path(ld_filename, args.log))
     if getattr(args, "vbo", False):
         targets.append(_vbo_output_path(ld_filename, args.log))
+    if getattr(args, "dlap", False):
+        targets.append(_dlap_output_path(ld_filename, args.log))
     return ld_filename, ldx_filename, targets
 
 
@@ -136,6 +138,15 @@ def _vbo_output_path(ld_filename, source_path):
     ):
         vbo_filename = os.path.splitext(ld_filename)[0] + "_export.vbo"
     return vbo_filename
+
+
+def _dlap_output_path(ld_filename, source_path):
+    dlap_filename = os.path.splitext(ld_filename)[0] + ".dlap"
+    if os.path.normcase(os.path.abspath(dlap_filename)) == os.path.normcase(
+        os.path.abspath(source_path)
+    ):
+        dlap_filename = os.path.splitext(ld_filename)[0] + "_export.dlap"
+    return dlap_filename
 
 
 _auto_detect_log_type = auto_detect_log_type
@@ -364,6 +375,11 @@ def process_one_file(args, stint_override=None, output_override=None,  # noqa: C
         if motec_log.write_vbo(vbo_filename, data_log):
             print(f"Saved .vbo track file: {vbo_filename}")
 
+    if getattr(args, "dlap", False):
+        dlap_filename = _dlap_output_path(ld_filename, args.log)
+        if motec_log.write_dlap(dlap_filename, data_log):
+            print(f"Saved .dlap track file: {dlap_filename}")
+
     print("Done!")
     return output_targets
 
@@ -401,6 +417,7 @@ def build_parser():
     parser.add_argument("--kml", action="store_true", help="Also generate KML Google Earth track file")
     parser.add_argument("--csv", action="store_true", help="Also generate CSV data file (RaceStudio / Excel import)")
     parser.add_argument("--vbo", action="store_true", help="Also generate VBO data file (Circuit Tools / GPS analysis import)")
+    parser.add_argument("--dlap", action="store_true", help="Also generate Dragy DLAP archive (LapTimer / GPS analysis import)")
     parser.add_argument("--csv-wallclock", action="store_true", default=False, dest="csv_wallclock",
                         help="Write wall-clock timestamps in CSV instead of elapsed seconds")
     parser.add_argument("--dbc", type=str, help="Path to DBC file, required if log type CAN")

@@ -169,3 +169,6 @@ class MotecLog:
     def write_vbo(self, vbo_filename, data_log):
         from .exporters.vbo_export import write_vbo
         return write_vbo(data_log, vbo_filename)
+    def write_dlap(self, dlap_filename, data_log):
+        from .exporters.dlap_export import write_dlap
+        return write_dlap(data_log, dlap_filename)
