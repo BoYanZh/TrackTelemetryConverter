@@ -187,3 +187,18 @@ def test_auto_detect_log_types():
     )
     assert auto_detect_log_type(os.path.join(EXAMPLES, "can_sample.log")) == "CAN"
     assert auto_detect_log_type(os.path.join(EXAMPLES, "vbo_sample.vbo")) == "VBO"
+
+
+def test_auto_detect_aim_csv_file(tmp_path):
+    from track_telemetry_converter.parsers import auto_detect_log_type
+
+    aim_csv = tmp_path / "aim_session.csv"
+    aim_csv.write_text(
+        '"Format","AiM CSV File"\n'
+        '"Session","new track 01"\n'
+        '\n'
+        '"Time","GPS Speed","GPS LatAcc","GPS LonAcc"\n'
+        '"s","mph","g","g"\n',
+        encoding="utf-8",
+    )
+    assert auto_detect_log_type(str(aim_csv)) == "RACECHRONO"

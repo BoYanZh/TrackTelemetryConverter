@@ -46,7 +46,7 @@ def auto_detect_log_type(file_path: str) -> str:
             return "CAN"
         if path_lower.endswith(".vbo") or "[header]" in sample or "[column names]" in sample:
             return "VBO"
-        if "RaceChrono" in sample or "RaceStudio" in sample or "Solo" in sample or "GPS_LatAcc" in sample:
+        if "RaceChrono" in sample or "RaceStudio" in sample or "Solo" in sample or "GPS_LatAcc" in sample or "AiM CSV File" in sample:
             return "RACECHRONO"
         if "Session ID" in sample or "Track ID" in sample or "PB Buddy" in sample:
             return "PBBUDDY"
