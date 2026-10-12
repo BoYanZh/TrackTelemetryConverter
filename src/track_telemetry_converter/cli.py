@@ -291,8 +291,31 @@ def _extract_log_data(args, active_type, data_log, stint_arg, target_session):
         return
 
 
-def _build_motec_log(args, data_log):
-    """Resolve venue/event/driver metadata and build the MoTeC log."""
+def _detect_gps_venue(data_log):
+    """Return a GPS-detected venue name, or "" when GPS is unusable/unknown."""
+    from .channels import CH_GPS_LATITUDE, CH_GPS_LONGITUDE
+    from .metadata import detect_venue_from_gps
+
+    channels = getattr(data_log, "channels", {})
+    lat_ch = channels.get(CH_GPS_LATITUDE)
+    lon_ch = channels.get(CH_GPS_LONGITUDE)
+    if lat_ch is None or lon_ch is None:
+        return ""
+    lats = [m.value for m in lat_ch.messages]
+    lons = [m.value for m in lon_ch.messages]
+    return detect_venue_from_gps(lats, lons)
+
+
+def _resolve_venue_name(args, data_log):
+    """Resolve the venue through strings, then GPS area detection.
+
+    Precedence: explicit --venue_name > file metadata / RCZ track > filename.
+    An explicit --venue_name is never overridden. When the string result
+    names no known track, GPS area detection fills in (e.g. AiM free text
+    like "new track 01"); anything still unknown passes through unchanged.
+    """
+    from .metadata import is_meaningful_venue
+
     meta = getattr(data_log, "metadata", {})
 
     venue_name = args.venue_name if args.venue_name else meta.get("venue_name", "")
@@ -306,6 +329,20 @@ def _build_motec_log(args, data_log):
             venue_name = _normalize_venue(meta.get("event_session", meta.get("Session", "")))
     else:
         venue_name = _normalize_venue(venue_name)
+
+    if not args.venue_name and not is_meaningful_venue(venue_name):
+        gps_venue = _detect_gps_venue(data_log)
+        if gps_venue:
+            print(f"GPS-detected venue: {gps_venue} (strings gave {venue_name!r})")
+            venue_name = gps_venue
+    return venue_name
+
+
+def _build_motec_log(args, data_log):
+    """Resolve venue/event/driver metadata and build the MoTeC log."""
+    meta = getattr(data_log, "metadata", {})
+
+    venue_name = _resolve_venue_name(args, data_log)
 
     data_log.metadata["venue_name"] = venue_name
 

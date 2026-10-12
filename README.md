@@ -143,6 +143,9 @@ Run `track-telemetry --help` for the authoritative option list.
 - `--g-source {auto,sensor,calc}` selects hardware or GPS-derived G channels.
 - `--mask-interp-gaps` leaves long sampling gaps as `NaN` instead of bridging
   them.
+- Venue falls back to GPS-area detection when filename/metadata name no
+  known track (e.g. AiM free text like "new track 01"); an explicit
+  `--venue_name` is never overridden.
 - `--csv`, `--vbo`, `--dlap`, `--gpx`, and `--kml` add optional exports.
 - `--vbo-columns` selects a subset of VBO extra columns, or renames them
   (`CustomName=Channel Name`); defaults to all available extras.
