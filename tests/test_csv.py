@@ -372,3 +372,23 @@ def test_racechrono_short_and_timed_laps():
     log = DataLog()
     log.from_racechrono_log(lines)
     assert [lap["type"] for lap in log.laps_info["laps"]] == ["Timed"]
+
+
+def test_racechrono_unlabeled_rows_do_not_form_bogus_lap():
+    lines = ["timestamp,lap_number,speed\n", "s,,m/s\n"]
+    for i in range(11):
+        lines.append(f"{i * 10.0:.1f},1,10.0\n")
+    for i in range(11, 21):
+        lines.append(f"{i * 10.0:.1f},,10.0\n")
+    for i in range(21, 51):
+        lines.append(f"{i * 10.0:.1f},2,10.0\n")
+    log = DataLog()
+    log.from_racechrono_log(lines)
+    laps = log.laps_info["laps"]
+    assert all(lap["lap_label"] != "" for lap in laps)
+    assert log.laps_info["total_laps"] == 2
+    # Unlabeled rows still contribute channel samples.
+    assert len(log.channels["Ground Speed"].messages) == 51
+    timed = [lap for lap in laps if lap["type"] == "Timed"]
+    bounds = [float(timed[0]["start_time"])] + [float(lap["end_time"]) for lap in timed]
+    assert bounds == sorted(bounds)

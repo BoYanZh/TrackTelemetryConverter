@@ -396,6 +396,11 @@ def _build_beacon_laps(header_beacons):
 
 def _build_timing_laps(data_log, laps_timing):
     """Build Out/Timed/In lap items from per-lap timing metadata."""
+    # Rows without a lap number (empty label) are real samples but not a lap.
+    # Keep the bucket only when it is the sole source (lap-less file fallback);
+    # otherwise it spans the whole session, sorts last, and unsorts markers.
+    if "" in laps_timing and len(laps_timing) > 1:
+        laps_timing = {k: v for k, v in laps_timing.items() if k != ""}
     lap_items = []
     fastest_lap = None
     fastest_dur = math.inf
