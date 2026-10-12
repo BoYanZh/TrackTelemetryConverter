@@ -111,17 +111,20 @@ KNOWN_VENUES = frozenset({
 })
 
 #: GPS areas for venue fallback detection: (venue, center lat, center lon,
-#: radius km). Centers are session GPS medians measured from real logs;
-#: observed sessions stay within 1 km of center while known tracks sit 50+ km
-#: apart, so 5 km is conservative. Only corpus-verified tracks are listed;
-#: files from other tracks keep resolving through filename/metadata strings.
-#: Thunderhill configs share one area (config stays P1 work); the East Bypass
-#: default mirrors normalize_venue()'s convention for the park.
+#: radius km). ONE area per facility on purpose: configs sharing tarmac
+#: (Thunderhill East/West/Cyclone, Buttonwillow Classic/Circuit, the Willow
+#: family) have near-identical centroids, so overlapping per-config areas
+#: would make nearest-match a coin flip. GPS therefore only ever claims
+#: facility level; config disambiguation stays P1 work. Centers are session
+#: GPS medians measured from real logs; observed sessions stay within 1 km
+#: of center while known facilities sit 50+ km apart, so 3 km is conservative.
+#: Only corpus-verified facilities are listed; files from other tracks keep
+#: resolving through filename/metadata strings.
 TRACK_AREAS = (
-    ("Thunderhill East Bypass", 39.53993, -122.33150, 5.0),
-    ("WeatherTech Raceway Laguna Seca", 36.58544, -121.75438, 5.0),
-    ("Sonoma Raceway", 38.16186, -122.45644, 5.0),
-    ("Buttonwillow Raceway Park", 35.49767, -119.55506, 5.0),
+    ("Thunderhill Raceway Park", 39.53993, -122.33150, 3.0),
+    ("WeatherTech Raceway Laguna Seca", 36.58544, -121.75438, 3.0),
+    ("Sonoma Raceway", 38.16186, -122.45644, 3.0),
+    ("Buttonwillow Raceway Park", 35.49767, -119.55506, 3.0),
 )
 
 _MIN_GPS_SAMPLES = 10

@@ -115,10 +115,19 @@ def test_resolve_venue_prefers_gps_over_meaningless_strings():
     from track_telemetry_converter.cli import _resolve_venue_name
 
     log = _gps_log(39.53993, -122.33150)
-    assert _resolve_venue_name(_args(), log) == "Thunderhill East Bypass"
+    assert _resolve_venue_name(_args(), log) == "Thunderhill Raceway Park"
 
     log = _gps_log(35.49767, -119.55506)
     assert _resolve_venue_name(_args(), log) == "Buttonwillow Raceway Park"
+
+
+def test_gps_never_claims_config_for_adjacent_layouts():
+    # ~1 km west of the Thunderhill center (West-track side, same tarmac
+    # complex): facility level only, never a config name.
+    assert detect_venue_from_gps([39.53993] * 20, [-122.34350] * 20) == "Thunderhill Raceway Park"
+    # Two nearby Buttonwillow points (Classic vs Circuit side) agree.
+    assert detect_venue_from_gps([35.49767] * 20, [-119.55506] * 20) == "Buttonwillow Raceway Park"
+    assert detect_venue_from_gps([35.50000] * 20, [-119.55200] * 20) == "Buttonwillow Raceway Park"
 
 
 def test_resolve_venue_never_overrides_explicit_or_known():
