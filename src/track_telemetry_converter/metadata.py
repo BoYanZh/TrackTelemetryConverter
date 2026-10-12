@@ -112,19 +112,22 @@ KNOWN_VENUES = frozenset({
 
 #: GPS areas for venue fallback detection: (venue, center lat, center lon,
 #: radius km). ONE area per facility on purpose: configs sharing tarmac
-#: (Thunderhill East/West/Cyclone, Buttonwillow Classic/Circuit, the Willow
-#: family) have near-identical centroids, so overlapping per-config areas
-#: would make nearest-match a coin flip. GPS therefore only ever claims
-#: facility level; config disambiguation stays P1 work. Centers are session
-#: GPS medians measured from real logs; observed sessions stay within 1 km
-#: of center while known facilities sit 50+ km apart, so 3 km is conservative.
-#: Only corpus-verified facilities are listed; files from other tracks keep
-#: resolving through filename/metadata strings.
+#: (Thunderhill East/West/Cyclone, the Willow family) have near-identical
+#: centroids, so overlapping per-config areas would make nearest-match a
+#: coin flip. The exception is separately measurable adjacent tracks:
+#: Buttonwillow Classic and Circuit medians cluster 1.35 km apart with
+#: <=0.2 km jitter, so they get tight non-overlapping areas instead.
+#: GPS only ever claims what centroids can prove: Classic returns the park
+#: name (its configs stay P1 work), Circuit returns its single config.
+#: Centers are session GPS medians measured from real logs. Only
+#: corpus-verified areas are listed; files from other tracks keep resolving
+#: through filename/metadata strings.
 TRACK_AREAS = (
     ("Thunderhill Raceway Park", 39.53993, -122.33150, 3.0),
     ("WeatherTech Raceway Laguna Seca", 36.58544, -121.75438, 3.0),
     ("Sonoma Raceway", 38.16186, -122.45644, 3.0),
-    ("Buttonwillow Raceway Park", 35.49767, -119.55506, 3.0),
+    ("Buttonwillow Raceway Park", 35.48920, -119.54440, 0.5),
+    ("Buttonwillow The Circuit", 35.49760, -119.55430, 0.5),
 )
 
 _MIN_GPS_SAMPLES = 10

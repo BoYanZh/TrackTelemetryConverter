@@ -117,17 +117,21 @@ def test_resolve_venue_prefers_gps_over_meaningless_strings():
     log = _gps_log(39.53993, -122.33150)
     assert _resolve_venue_name(_args(), log) == "Thunderhill Raceway Park"
 
-    log = _gps_log(35.49767, -119.55506)
+    log = _gps_log(35.48920, -119.54440)
     assert _resolve_venue_name(_args(), log) == "Buttonwillow Raceway Park"
 
+    log = _gps_log(35.49760, -119.55430)
+    assert _resolve_venue_name(_args(), log) == "Buttonwillow The Circuit"
 
-def test_gps_never_claims_config_for_adjacent_layouts():
-    # ~1 km west of the Thunderhill center (West-track side, same tarmac
-    # complex): facility level only, never a config name.
-    assert detect_venue_from_gps([39.53993] * 20, [-122.34350] * 20) == "Thunderhill Raceway Park"
-    # Two nearby Buttonwillow points (Classic vs Circuit side) agree.
-    assert detect_venue_from_gps([35.49767] * 20, [-119.55506] * 20) == "Buttonwillow Raceway Park"
-    assert detect_venue_from_gps([35.50000] * 20, [-119.55200] * 20) == "Buttonwillow Raceway Park"
+
+def test_gps_separates_buttonwillow_classic_from_circuit():
+    # Measured session medians (4 Classic configs, 2 Circuit sessions).
+    assert detect_venue_from_gps([35.48917] * 20, [-119.54445] * 20) == "Buttonwillow Raceway Park"
+    assert detect_venue_from_gps([35.48911] * 20, [-119.54576] * 20) == "Buttonwillow Raceway Park"
+    assert detect_venue_from_gps([35.49767] * 20, [-119.55506] * 20) == "Buttonwillow The Circuit"
+    assert detect_venue_from_gps([35.49754] * 20, [-119.55354] * 20) == "Buttonwillow The Circuit"
+    # Midpoint in the gap between the areas: safe passthrough, no coin flip.
+    assert detect_venue_from_gps([35.49340] * 20, [-119.54935] * 20) == ""
 
 
 def test_resolve_venue_never_overrides_explicit_or_known():
