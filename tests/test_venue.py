@@ -68,9 +68,10 @@ def test_is_meaningful_venue():
 
 
 def test_detect_venue_from_gps():
-    for venue, clat, clon, _ in TRACK_AREAS:
-        lats = [clat + 0.001 * (i % 5) for i in range(20)]
-        lons = [clon - 0.001 * (i % 5) for i in range(20)]
+    for venue, clat, clon, radius_km in TRACK_AREAS:
+        step = 0.001 if radius_km >= 1.0 else 0.0002
+        lats = [clat + step * (i % 5) for i in range(20)]
+        lons = [clon - step * (i % 5) for i in range(20)]
         assert detect_venue_from_gps(lats, lons) == venue
     assert detect_venue_from_gps([40.7] * 20, [-74.0] * 20) == ""
     assert detect_venue_from_gps([], []) == ""
@@ -124,6 +125,19 @@ def test_resolve_venue_prefers_gps_over_meaningless_strings():
     assert _resolve_venue_name(_args(), log) == "Buttonwillow The Circuit"
 
 
+def test_gps_separates_thunderhill_east_from_west():
+    # Measured session medians: 3 East Bypass + Cyclone + 5-mile all fall in
+    # the East cluster (same tarmac / union course) -> park name only.
+    assert detect_venue_from_gps([39.53976] * 20, [-122.33214] * 20) == "Thunderhill Raceway Park"
+    assert detect_venue_from_gps([39.53947] * 20, [-122.33133] * 20) == "Thunderhill Raceway Park"
+    assert detect_venue_from_gps([39.53944] * 20, [-122.33237] * 20) == "Thunderhill Raceway Park"
+    # West cluster -> "Thunderhill West" (sub-config detail stays with strings).
+    assert detect_venue_from_gps([39.53688] * 20, [-122.33858] * 20) == "Thunderhill West"
+    assert detect_venue_from_gps([39.53720] * 20, [-122.33865] * 20) == "Thunderhill West"
+    # Midpoint in the gap between the areas: safe passthrough, no coin flip.
+    assert detect_venue_from_gps([39.53827] * 20, [-122.33534] * 20) == ""
+
+
 def test_gps_separates_buttonwillow_classic_from_circuit():
     # Measured session medians (4 Classic configs, 2 Circuit sessions).
     assert detect_venue_from_gps([35.48917] * 20, [-119.54445] * 20) == "Buttonwillow Raceway Park"
@@ -132,6 +146,33 @@ def test_gps_separates_buttonwillow_classic_from_circuit():
     assert detect_venue_from_gps([35.49754] * 20, [-119.55354] * 20) == "Buttonwillow The Circuit"
     # Midpoint in the gap between the areas: safe passthrough, no coin flip.
     assert detect_venue_from_gps([35.49340] * 20, [-119.54935] * 20) == ""
+
+
+def test_thunderhill_west_gets_shared_beacon_traps():
+    from track_telemetry_converter.models import Message
+
+    log = DataLog()
+    log.metadata["venue_name"] = "Thunderhill West"
+    log.add_channel("GPS Latitude", "deg", float, 7)
+    log.add_channel("GPS Longitude", "deg", float, 7)
+    lats, lons, stamps = [], [], []
+    for t in range(0, 26):
+        stamps.append(float(t))
+        lats.append(39.537866)
+        lons.append(-122.334007 + (t - 21) * 0.0001)
+    for t in range(66, 81):
+        stamps.append(float(t))
+        lats.append(39.537866)
+        lons.append(-122.334007 + (t - 71) * 0.0001)
+    log.channels["GPS Latitude"].messages = [
+        Message(t, v) for t, v in zip(stamps, lats, strict=False)
+    ]
+    log.channels["GPS Longitude"].messages = [
+        Message(t, v) for t, v in zip(stamps, lons, strict=False)
+    ]
+    beacons = log.detect_beacons()
+    assert len(beacons) == 2
+    assert all(name == "Start/Finish" for _, name in beacons)
 
 
 def test_resolve_venue_never_overrides_explicit_or_known():

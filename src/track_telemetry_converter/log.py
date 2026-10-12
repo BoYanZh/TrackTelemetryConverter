@@ -177,6 +177,8 @@ class DataLog:
                     traps = [TRACK_BEACONS["Thunderhill 5 Mile Double Bypass"]]
                 elif "cyclone" in venue:
                     traps = [TRACK_BEACONS["Thunderhill East Cyclone"]]
+                elif "west" in venue:
+                    traps = [TRACK_BEACONS["Thunderhill West"]]
                 elif "west" not in venue:
                     traps = [TRACK_BEACONS["Thunderhill East Bypass"]]
 

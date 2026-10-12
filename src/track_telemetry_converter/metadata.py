@@ -111,19 +111,20 @@ KNOWN_VENUES = frozenset({
 })
 
 #: GPS areas for venue fallback detection: (venue, center lat, center lon,
-#: radius km). ONE area per facility on purpose: configs sharing tarmac
-#: (Thunderhill East/West/Cyclone, the Willow family) have near-identical
-#: centroids, so overlapping per-config areas would make nearest-match a
-#: coin flip. The exception is separately measurable adjacent tracks:
-#: Buttonwillow Classic and Circuit medians cluster 1.35 km apart with
-#: <=0.2 km jitter, so they get tight non-overlapping areas instead.
-#: GPS only ever claims what centroids can prove: Classic returns the park
-#: name (its configs stay P1 work), Circuit returns its single config.
-#: Centers are session GPS medians measured from real logs. Only
-#: corpus-verified areas are listed; files from other tracks keep resolving
-#: through filename/metadata strings.
+#: radius km). Areas must never overlap: configs sharing tarmac (Cyclone vs
+#: Bypass, the Willow family) have near-identical centroids, so they share
+#: one facility-level area instead of coin-flip nearest-matching. Splits are
+#: allowed only for separately measurable adjacent tracks (Buttonwillow
+#: Classic/Circuit 1.35 km apart, Thunderhill East/West 0.63 km apart).
+#: GPS only ever claims what centroids can prove; anything finer stays P1.
+#: The East cluster also contains Cyclone and 5-mile sessions (same tarmac
+#: / union course), hence East returns the park name; 5-mile is inseparable
+#: by centroid and needs lap-length signatures (P1). West-side configs share
+#: one loop, so West returns "Thunderhill West" (sub-config detail stays
+#: with strings).
 TRACK_AREAS = (
-    ("Thunderhill Raceway Park", 39.53993, -122.33150, 3.0),
+    ("Thunderhill Raceway Park", 39.53944, -122.33210, 0.25),
+    ("Thunderhill West", 39.53709, -122.33858, 0.25),
     ("WeatherTech Raceway Laguna Seca", 36.58544, -121.75438, 3.0),
     ("Sonoma Raceway", 38.16186, -122.45644, 3.0),
     ("Buttonwillow Raceway Park", 35.48920, -119.54440, 0.5),
