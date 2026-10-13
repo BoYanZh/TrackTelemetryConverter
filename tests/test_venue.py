@@ -9,6 +9,7 @@ from track_telemetry_converter.metadata import (
     detect_venue_from_gps,
     is_meaningful_venue,
     normalize_venue,
+    venue_facility,
 )
 
 
@@ -65,6 +66,18 @@ def test_is_meaningful_venue():
     assert is_meaningful_venue("Thunderhill East Bypass")
     assert is_meaningful_venue("thunder_hill_east_bypass")
     assert is_meaningful_venue("WeatherTech Raceway Laguna Seca")
+
+
+def test_venue_facility():
+    assert venue_facility("Thunderhill East Bypass") == "thunderhill"
+    assert venue_facility("Thunderhill West CCW") == "thunderhill"
+    assert venue_facility("Thunderhill Raceway Park") == "thunderhill"
+    assert venue_facility("Buttonwillow 13CW") == "buttonwillow"
+    assert venue_facility("Buttonwillow The Circuit") == "buttonwillow"
+    assert venue_facility("Buttonwillow Raceway Park") == "buttonwillow"
+    assert venue_facility("WeatherTech Raceway Laguna Seca") == "WeatherTech Raceway Laguna Seca"
+    assert venue_facility("new track 01") == "new track 01"
+    assert venue_facility("") == ""
 
 
 def test_detect_venue_from_gps():
@@ -181,8 +194,23 @@ def test_resolve_venue_never_overrides_explicit_or_known():
     log = _gps_log(39.53993, -122.33150)
     assert _resolve_venue_name(_args(venue_name="My Backyard"), log) == "My Backyard"
 
+    # Cross-facility conflict follows GPS (stale strings lose).
     log = _gps_log(35.49767, -119.55506, venue="Laguna Seca")
-    assert _resolve_venue_name(_args(), log) == "WeatherTech Raceway Laguna Seca"
+    assert _resolve_venue_name(_args(), log) == "Buttonwillow The Circuit"
 
     log = _gps_log(0.0, 0.0)
     assert _resolve_venue_name(_args(), log) == "new track 01"
+
+
+def test_resolve_venue_gps_corrects_facility_mismatch():
+    from track_telemetry_converter.cli import _resolve_venue_name
+
+    # Filename claims Thunderhill but GPS is at Buttonwillow Classic
+    # (data/saurabh/thill_east_aim_session_2.csv): coordinates win.
+    log = _gps_log(35.48921, -119.54395, venue="")
+    args = _args(log="thill_east_aim_session_2.csv")
+    assert _resolve_venue_name(args, log) == "Buttonwillow Raceway Park"
+
+    # Same facility: strings keep their config detail.
+    log = _gps_log(39.53709, -122.33858, venue="Thunderhill West")
+    assert _resolve_venue_name(_args(), log) == "Thunderhill West"

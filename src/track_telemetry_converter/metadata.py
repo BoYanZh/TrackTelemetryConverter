@@ -146,6 +146,25 @@ def is_meaningful_venue(name):
     return normalize_venue(name) in KNOWN_VENUES
 
 
+def venue_facility(name):
+    """Return the facility key for a venue string.
+
+    Configs sharing one facility map together (all Thunderhill names,
+    all Classic configs); other canonical venues are their own facility;
+    unknown strings map to themselves so they always lose to a GPS hit.
+    Used to let GPS correct facility-level mismatches (e.g. a file named
+    for one track but recorded at another) without touching config detail.
+    """
+    norm = normalize_venue(name) if name else ""
+    if norm in KNOWN_VENUES:
+        for prefix, facility in (("Thunderhill", "thunderhill"),
+                                 ("Buttonwillow", "buttonwillow")):
+            if norm.startswith(prefix):
+                return facility
+        return norm
+    return name or ""
+
+
 def _haversine_km(lat1, lon1, lat2, lon2):
     """Great-circle distance in km."""
     from math import asin, cos, radians, sin, sqrt

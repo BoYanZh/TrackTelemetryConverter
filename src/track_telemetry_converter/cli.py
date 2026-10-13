@@ -314,7 +314,7 @@ def _resolve_venue_name(args, data_log):
     names no known track, GPS area detection fills in (e.g. AiM free text
     like "new track 01"); anything still unknown passes through unchanged.
     """
-    from .metadata import is_meaningful_venue
+    from .metadata import is_meaningful_venue, venue_facility
 
     meta = getattr(data_log, "metadata", {})
 
@@ -330,9 +330,10 @@ def _resolve_venue_name(args, data_log):
     else:
         venue_name = _normalize_venue(venue_name)
 
-    if not args.venue_name and not is_meaningful_venue(venue_name):
+    if not args.venue_name:
         gps_venue = _detect_gps_venue(data_log)
-        if gps_venue:
+        if gps_venue and (not is_meaningful_venue(venue_name)
+                          or venue_facility(venue_name) != venue_facility(gps_venue)):
             print(f"GPS-detected venue: {gps_venue} (strings gave {venue_name!r})")
             venue_name = gps_venue
     return venue_name
