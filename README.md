@@ -13,6 +13,8 @@ Supported inputs:
 - Garmin `.fit`
 - Racelogic VBOX `.vbo`
 - Dragy `.dlap` (requires `pip install ".[dlap]"`)
+- Tesla Track Mode CSV (`telemetry-v1-*.csv`)
+- TrackAddict / RaceRender-Data CSV
 - COBB Accessport and PB Buddy CSV
 - raw CAN logs with a DBC file
 - generic CSV
@@ -73,9 +75,9 @@ The package module is an equivalent fallback:
 python -m track_telemetry_converter session.rcz AUTO
 ```
 
-`AUTO` detects IBT, RCZ, XRK/XRZ, FIT, VBO, DLAP, PB Buddy, AIM/RaceChrono CSV,
+`AUTO` detects IBT, RCZ, XRK/XRZ, FIT, VBO, DLAP, Tesla, TrackAddict, PB Buddy, AIM/RaceStudio/RaceRender CSV,
 Accessport CSV, and generic CSV inputs. Explicit choices are `CAN`, `CSV`,
-`ACCESSPORT`, `RACECHRONO`, `RCZ`, `PBBUDDY`, `VBO`, `DLAP`, `IBT`, `XRK`, and `FIT`.
+`ACCESSPORT`, `RACECHRONO`, `RCZ`, `PBBUDDY`, `TRACKADDICT`, `TESLA`, `VBO`, `DLAP`, `IBT`, `XRK`, and `FIT`.
 
 Common options:
 

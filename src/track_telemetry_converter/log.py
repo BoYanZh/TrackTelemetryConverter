@@ -426,6 +426,14 @@ class DataLog:
         from .parsers.pbbuddy_parser import parse_pbbuddy_log
         parse_pbbuddy_log(self, log_lines, target_lap=target_lap)
 
+    def from_trackaddict_log(self, log_lines, target_lap=None):
+        from .parsers.trackaddict_parser import parse_trackaddict_log
+        parse_trackaddict_log(self, log_lines, target_lap=target_lap)
+
+    def from_tesla_log(self, log_lines, target_lap=None):
+        from .parsers.tesla_parser import parse_tesla_log
+        parse_tesla_log(self, log_lines, target_lap=target_lap)
+
     def from_rcz_log(self, rcz_file_path, target_lap=None, target_stint=None,
                      min_lap_sec=15.0, mask_interp_gaps=False,
                      target_session=None):

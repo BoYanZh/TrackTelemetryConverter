@@ -18,6 +18,8 @@ SUPPORTED_LOG_TYPES = (
     "RACECHRONO",
     "RCZ",
     "PBBUDDY",
+    "TRACKADDICT",
+    "TESLA",
     "VBO",
     "DLAP",
     "IBT",
@@ -46,6 +48,10 @@ def auto_detect_log_type(file_path: str) -> str:
             return "CAN"
         if path_lower.endswith(".vbo") or "[header]" in sample or "[column names]" in sample:
             return "VBO"
+        if "# RaceRender Data" in sample:
+            return "TRACKADDICT"
+        if "Elapsed Time (ms)" in sample:
+            return "TESLA"
         if "RaceChrono" in sample or "RaceStudio" in sample or "Solo" in sample or "GPS_LatAcc" in sample or "AiM CSV File" in sample:
             return "RACECHRONO"
         if "Session ID" in sample or "Track ID" in sample or "PB Buddy" in sample:
