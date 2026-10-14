@@ -289,6 +289,9 @@ RCZ_PID_MAP = {
     # left = {197623, 132087} vs right = {164855, 99319} from GPS-heading-backed
     # turn analysis; driven (rear) axle = {132087, 99319} from monotonic
     # throttle/brake response (spins up under power, dips under braking).
+    # NOTE: 2021-22 files carry a shifted twin series {164853, 132085, 197621,
+    # 99317} that is all-NaN there (unsupported sensors, not separate signals);
+    # do not map it.
     "197623": (CH_WHEEL_SPEED_FL, "km/h", 3.6, 0.0),
     "164855": (CH_WHEEL_SPEED_FR, "km/h", 3.6, 0.0),
     "132087": (CH_WHEEL_SPEED_RL, "km/h", 3.6, 0.0),
