@@ -28,7 +28,7 @@ def test_cli_rcz_end_to_end():
     with tempfile.TemporaryDirectory() as tmp_dir:
         source = os.path.join(tmp_dir, "minimal.rcz")
         _write_minimal_rcz(source)
-        _assert_cli_roundtrip(source, "RCZ", expected_channels=("Pitch Angle",))
+        _assert_cli_roundtrip(source, "RCZ", expected_channels=("CG Accel Longitudinal",))
 
 
 def test_rcz_preserves_canonical_absolute_time_origin():
@@ -81,7 +81,7 @@ def test_rcz_int64_device_timestamps_survive_low32_rollover():
             np.arange(5, dtype="<i4") + 222_000_000,
             np.arange(5, dtype="<i4") - 732_000_000,
         ))
-        pitch = np.array([-2.0, -1.0, 0.0, 1.0, 2.0], dtype="<f8")
+        lon_accel_ms2 = np.array([-2.0, -1.0, 0.0, 1.0, 2.0], dtype="<f8")
         lateral_g_raw = np.array([1000, 2000, 3000, 4000, 5000], dtype="<i4")
         session = {
             "firstTimestamp": int(base),
@@ -97,14 +97,16 @@ def test_rcz_int64_device_timestamps_survive_low32_rollover():
             archive.writestr("channel_2_201_0_1_1", timestamps.tobytes())
             archive.writestr("channel_2_201_0_10_0", lateral_g_raw.tobytes())
             archive.writestr("channel_12_100_8_8_1_1", timestamps.tobytes())
-            archive.writestr("channel2_12_100_8_8_3", pitch.tobytes())
+            archive.writestr("channel2_12_100_8_8_3", lon_accel_ms2.tobytes())
 
         log = DataLog()
         log.from_rcz_log(source)
 
-        channel = log.channels["Pitch Angle"]
+        channel = log.channels["CG Accel Longitudinal"]
         assert np.allclose(channel.timestamps, [0.0, 0.05, 0.10, 0.15, 0.20])
-        assert np.allclose(channel.values, [-2.0, -1.0, 0.0, 1.0, 2.0])
+        assert np.allclose(
+            channel.values, np.array([-2.0, -1.0, 0.0, 1.0, 2.0]) / 9.80665,
+        )
         assert np.allclose(
             log.channels["CG Accel Lateral"].values,
             [0.1, 0.2, 0.3, 0.4, 0.5],

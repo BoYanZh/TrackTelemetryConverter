@@ -262,8 +262,14 @@ RCZ_PID_MAP = {
     "1004":  (CH_GEAR, "", 1.0, 0.0),                     # -1 ~ 5 (Integer gear)
     "4":     (CH_GROUND_SPEED, "km/h", 3.6, 0.0),         # raw is m/s (0 ~ 50 m/s -> km/h)
     "51":    (CH_YAW_RATE, "deg/s", 1.0, 0.0),            # -37 ~ 39 deg/s
-    "7":     (CH_ROLL_ANGLE, "deg", 1.0, 0.0),            # Roll Angle (-11.6 ~ 11.2 deg)
-    "8":     (CH_PITCH_ANGLE, "deg", 1.0, 0.0),           # Pitch Angle (-10.6 ~ 4.0 deg)
+    # Device-12 computed accelerometers are SI (m/s^2), NOT angles: app tables
+    # name pid 7/8 lateral/longitudinal acceleration in G class, and file
+    # values (+/-15.6, i.e. +/-1.6 G peaks) match track physics while +/-15
+    # degrees of roll/pitch do not. A previous comment misread the peaks as
+    # degrees. Shared overwrite semantics: IMU channels parsed first keep
+    # their names, so these only surface when no IMU is present.
+    "7":     (CH_CG_ACCEL_LAT, "G", 1.0 / _G, 0.0),
+    "8":     (CH_CG_ACCEL_LON, "G", 1.0 / _G, 0.0),
     "10031": (CH_AMBIENT_TEMP, "C", 1.0, 0.0),            # Ambient Temp (16 ~ 87 C)
     # PIDs verified against RaceChrono v10.2.4 channel tables,
     # each value-checked against corpus sessions:
