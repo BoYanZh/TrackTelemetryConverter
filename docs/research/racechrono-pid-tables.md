@@ -6,6 +6,7 @@ Date: 2026-10-14
 
 - The app package carries exact display names for every standard PID plus unit classes, raw-byte decode formulas, and a custom-CAN path. Five corrections/additions landed from it: `10058`->Fuel Level (was wrongly Analog 1), `1020`->Fuel Volume, `1003`->Clutch Pos, `14`->Chassis Yaw Rate, `43`->G Force Combined.
 - Bulk-adding dormant mappings was REJECTED: file units differ from display units (proof: generic wheel speed 1015 displays km/h while sibling custom PIDs store m/s), so unobserved PIDs cannot be scaled safely. Only corpus-observed PIDs enter `RCZ_PID_MAP`.
+- Device-12 PIDs 7/8 are SI accelerometers (m/s^2), NOT roll/pitch angles: the app tables name them lateral/longitudinal acceleration in G class, and file values (+/-15.6, i.e. +/-1.6 G peaks) match track physics while +/-15 degrees of body roll does not. A previous comment had misread the peaks as degrees. They share overwrite semantics with the IMU channels parsed first (IMU wins when present).
 - Vehicle-custom CAN PIDs (7-digit) appear nowhere in the app: they come from user CAN configuration at runtime and are unmappable by construction. Unknowns stay raw `OBD_<pid>` with zero data loss.
 
 ## Provenance
@@ -28,6 +29,8 @@ Date: 2026-10-14
 | 1003 | clutch_pos | 0 ~ 100 in 3 files | Clutch Pos, %, x1.0 |
 | 14 | Z rate of rotation | +/-53, sole yaw source in 2021-22 files | Chassis Yaw Rate, deg/s, x1.0 |
 | 43 | Combined acceleration | 0 ~ 19.7 m/s^2 in 6 files | G Force Combined, G, /9.80665 |
+| 7 | Lateral acceleration | +/-15.6 (= +/-1.6 G peaks) | CG Accel Lateral, G, /9.80665 |
+| 8 | Longitudinal acceleration | -11.6 ~ +6.0 (braking peaks) | CG Accel Longitudinal, G, /9.80665 |
 
 ## Full reference (generated from v10.2.4 tables)
 
