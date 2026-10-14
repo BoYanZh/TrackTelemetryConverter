@@ -33,6 +33,7 @@ CH_THROTTLE_POS         = "Throttle Pos"
 CH_ACCELERATOR_POS      = "Accelerator Pos"
 CH_BRAKE_PRESS          = "Brake Press"
 CH_BRAKE_POS            = "Brake Pos"
+CH_CLUTCH_POS           = "Clutch Pos"
 CH_ENGINE_RPM           = "Engine RPM"
 CH_STEERING_ANGLE       = "Steering Angle"
 CH_COOLANT_TEMP         = "Coolant Temp"
@@ -190,8 +191,11 @@ CHANNEL_ALIASES = {
     "OBD_3155786":            (CH_ENGINE_OIL_TEMP, "C", 2),
     "OBD_45098826":           (CH_AMBIENT_TEMP, "C", 2),
     "OBD_1020":               (CH_FUEL_LEVEL, "%", 2),
+    # Verified against RaceChrono v10.2.4 channel tables: "Fuel level", unit class %.
+    # Corpus: exact x2.00 vs pid 1020 (fuel volume, 50 L tank arithmetic) in
+    # all 10 files carrying both. No device-4 10058 exists, so no key collision.
+    "OBD_10058":              (CH_FUEL_LEVEL, "%", 2),
     # Raw undecoded OBD fallbacks below are intentionally literal, not canonical channels.
-    "OBD_10058":              ("Analog 1", "", 2),
     "OBD_44050250":           ("Digital 42", "", 0),
     "OBD_44045193":           ("Status Flag 44045193", "", 0),
 }
@@ -261,6 +265,24 @@ RCZ_PID_MAP = {
     "7":     (CH_ROLL_ANGLE, "deg", 1.0, 0.0),            # Roll Angle (-11.6 ~ 11.2 deg)
     "8":     (CH_PITCH_ANGLE, "deg", 1.0, 0.0),           # Pitch Angle (-10.6 ~ 4.0 deg)
     "10031": (CH_AMBIENT_TEMP, "C", 1.0, 0.0),            # Ambient Temp (16 ~ 87 C)
+    # PIDs verified against RaceChrono v10.2.4 channel tables,
+    # each value-checked against corpus sessions:
+    # - 10058 "Fuel level" (% class): exact x2.00 vs pid 1020 (fuel volume,
+    #   50 L tank arithmetic) in all 10 files carrying both.
+    "10058": (CH_FUEL_LEVEL, "%", 1.0, 0.0),
+    # - 1003 "clutch_pos" (% class): 0 ~ 100 in 3 files.
+    "1003": (CH_CLUTCH_POS, "%", 1.0, 0.0),
+    # - 14 "Z rate of rotation": +/-53 value range, sole yaw source in
+    #   2021-22 files (no pid 51 / gyro files there); deg/s like pid 51.
+    "14": (CH_YAW_RATE, "deg/s", 1.0, 0.0),
+    # - 43 "Combined acceleration": 0 ~ 19.7 m/s^2 in 6 files, hence G needs
+    #   /9.80665. Shares overwrite semantics with racechrono combined_acc:
+    #   calculate_g_sum recomputes it from lat/lon G at math time.
+    "43": (CH_G_COMBINED, "G", 1.0 / _G, 0.0),
+    # - 1020 "fuel_level_vol": -2 ~ 29 in 12 files, litres of a 50 L tank
+    #   (exact x0.50 vs pid 10058 fuel level). Kept distinct from CH_FUEL_LEVEL
+    #   so both readings survive; no unit convention for fuel volume exists yet.
+    "1020": ("Fuel Volume", "L", 1.0, 0.0),
     "1053576": (CH_WHEEL_SPEED_AVG, "rpm", 1.0, 0.0),     # Wheel Speed (1296 ~ 3230)
     # Four individual wheel speeds, raw unit is m/s (0 ~ 49 m/s).
     # Verified on 2026-10-03/04 Thunder Hill East Bypass sessions (RWD GR86):

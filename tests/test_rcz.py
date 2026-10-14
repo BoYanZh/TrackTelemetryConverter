@@ -234,6 +234,63 @@ def test_rcz_maps_four_wheel_speed_pids(tmp_path):
         )
 
 
+def test_rcz_maps_app_verified_pids(tmp_path):
+    """PIDs from the RaceChrono v10.2.4 channel tables map to canonical channels.
+
+    10058 fuel level (x2.00 vs pid 1020 in 10 corpus files), 1003 clutch_pos,
+    14 Z-rate gyro (sole yaw source in 2021-22 files), 43 combined accel in
+    m/s^2 (0 ~ 19.7 in 6 files).
+    """
+    first = 1_700_000_000_000
+    stamps_ms = (first + np.array([0, 100, 200, 300], dtype="<i8")).astype("<i8")
+    path = tmp_path / "app-pids.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        archive.writestr("channel_1_300_0_1_1", stamps_ms.tobytes())
+        archive.writestr(
+            "channel_1_300_0_4_0",
+            np.full(4, 10_000, dtype="<i4").tobytes(),
+        )
+        pid_values = {
+            "10058": [10.0, 20.0, 30.0, 40.0],
+            "1020": [5.0, 10.0, 15.0, 20.0],
+            "1003": [0.0, 50.0, 100.0, 25.0],
+            "14": [-10.0, 5.0, 20.0, -30.0],
+            "43": [4.903325, 9.80665, 14.709975, 19.6133],
+        }
+        for pid, values in pid_values.items():
+            archive.writestr(f"channel_12_200_{pid}_1_1", stamps_ms.tobytes())
+            archive.writestr(
+                f"channel2_12_200_{pid}_{pid}_3",
+                np.array(values, dtype="<f8").tobytes(),
+            )
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    fuel = log.channels["Fuel Level"]
+    assert fuel.units == "%"
+    np.testing.assert_allclose(fuel.values, [10.0, 20.0, 30.0, 40.0], atol=1e-9)
+
+    volume = log.channels["Fuel Volume"]
+    assert volume.units == "L"
+    np.testing.assert_allclose(volume.values, [5.0, 10.0, 15.0, 20.0], atol=1e-9)
+
+    clutch = log.channels["Clutch Pos"]
+    assert clutch.units == "%"
+    np.testing.assert_allclose(clutch.values, [0.0, 50.0, 100.0, 25.0], atol=1e-9)
+
+    yaw = log.channels["Chassis Yaw Rate"]
+    assert yaw.units == "deg/s"
+    np.testing.assert_allclose(yaw.values, [-10.0, 5.0, 20.0, -30.0], atol=1e-9)
+
+    combined = log.channels["G Force Combined"]
+    assert combined.units == "G"
+    np.testing.assert_allclose(combined.values, [0.5, 1.0, 1.5, 2.0], atol=1e-9)
+
+
 def test_cli_rcz_backup_lists_sessions_without_exporting():
     with tempfile.TemporaryDirectory() as tmp_dir:
         source = os.path.join(tmp_dir, "backup.rcz")
