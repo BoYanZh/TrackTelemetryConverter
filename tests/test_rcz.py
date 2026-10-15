@@ -186,8 +186,8 @@ def test_rcz_sensor_boundaries_use_per_sample_timestamps(tmp_path, mask_interp_g
     np.testing.assert_allclose(imu, [np.nan, 0.1, 0.2, 0.245454545, 0.3,
                                      0.33, 0.4, np.nan], atol=1e-5)
     yaw = log.channels["Chassis Yaw Rate"].values
-    np.testing.assert_allclose(yaw, [1, 1.444444444, 2, 2.294117647,
-                                     2.647058824, 3, np.nan, np.nan], atol=1e-5)
+    np.testing.assert_allclose(yaw, [-1, -1.444444444, -2, -2.294117647,
+                                     -2.647058824, -3, np.nan, np.nan], atol=1e-5)
     brake = log.channels["Brake Pos"].values
     np.testing.assert_allclose(brake, [np.nan, 10, 20, 24.545454545, 30,
                                        33, 40, np.nan], atol=1e-5)
@@ -614,3 +614,50 @@ def test_cli_rejects_invalid_min_lap_sec():
     )
     assert result.returncode == 1
     assert "--min-lap-sec must be a positive finite number" in result.stdout
+
+
+
+def test_rcz_imu_axes_and_can_yaw_use_consistent_vehicle_sign(tmp_path):
+    """Synthetic device-2/3 RCZ uses G and CAN-positive yaw conventions."""
+    first = 1_700_000_000_000
+    ts = (first + np.arange(16, dtype="<i8") * 40).astype("<i8")
+    path = tmp_path / "imu-axis-conventions.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_100_0_1_1", ts.tobytes())
+        z.writestr("channel_1_100_0_4_0",
+                   np.full(len(ts), 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_2_101_0_1_1", ts.tobytes())
+        z.writestr("channel_2_101_0_9_0",
+                   np.full(len(ts), -3200, dtype="<i4").tobytes())
+        z.writestr("channel_2_101_0_10_0",
+                   np.full(len(ts), 8500, dtype="<i4").tobytes())
+        z.writestr("channel_2_101_0_11_0",
+                   np.full(len(ts), 9700, dtype="<i4").tobytes())
+        z.writestr("channel_3_102_0_1_1", ts.tobytes())
+        z.writestr("channel_3_102_0_14_0",
+                   np.full(len(ts), -12000, dtype="<i4").tobytes())
+
+    gyro = DataLog()
+    gyro.from_rcz_log(str(path), mask_interp_gaps=True)
+    np.testing.assert_allclose(gyro.channels["CG Accel Lateral"].values, 0.85)
+    np.testing.assert_allclose(gyro.channels["CG Accel Longitudinal"].values, -0.32)
+    np.testing.assert_allclose(gyro.channels["CG Accel Vertical"].values, 0.97)
+    assert "Lean Angle" not in gyro.channels
+    np.testing.assert_allclose(gyro.channels["Chassis Yaw Rate"].values, 12.0)
+    assert gyro.metadata["longitudinal_accel_source"] == "rcz_accelerometer_2_101"
+    assert gyro.metadata["lateral_accel_source"] == "rcz_accelerometer_2_101"
+    assert gyro.metadata["vertical_accel_source"] == "rcz_accelerometer_2_101"
+    assert gyro.metadata["yaw_rate_source"] == "rcz_gyro_3_102"
+
+    # CAN yaw uses the same positive-vehicle sign and supersedes device 3.
+    with zipfile.ZipFile(path, "a") as z:
+        z.writestr("channel_12_200_51_1_1", ts.tobytes())
+        z.writestr("channel2_12_200_51_51_3",
+                   np.full(len(ts), 12.0, dtype="<f8").tobytes())
+    can = DataLog()
+    can.from_rcz_log(str(path), mask_interp_gaps=True)
+    np.testing.assert_allclose(can.channels["Chassis Yaw Rate"].values, 12.0)
+    assert can.metadata["yaw_rate_source"] == "rcz_can_12_200_pid_51"
