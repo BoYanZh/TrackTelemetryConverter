@@ -18,7 +18,6 @@ from ..channels import (
     CH_GPS_LONGITUDE,
     CH_GROUND_SPEED,
     CH_LAP_NUMBER,
-    CH_LEAN_ANGLE,
     CH_RUNNING_TIME,
     CH_YAW_RATE,
     RCZ_PID_MAP,
