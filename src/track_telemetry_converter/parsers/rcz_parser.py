@@ -98,6 +98,18 @@ def _resolve_rcz_prefix(z, target_session, target_stint):
         if stint_value > 0:
             prefix += f"resume_{stint_value}/"
     namelist = [n[len(prefix):] for n in all_names if n.startswith(prefix)]
+    if prefix == session_prefix:
+        # The archive root also contains resume_N/ files. Parsing stint 0
+        # must not ingest later-stint CAN channels merely because their names
+        # share the root prefix. Keep unrelated metadata directories intact.
+        namelist = [
+            name for name in namelist
+            if not (
+                name.startswith("resume_")
+                and "/" in name
+                and name.split("/", 1)[0][7:].isdigit()
+            )
+        ]
     return prefix, session_prefix, namelist
 
 def _read_rcz_entry(z, prefix, name):

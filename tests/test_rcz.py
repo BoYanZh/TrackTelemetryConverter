@@ -661,3 +661,33 @@ def test_rcz_imu_axes_and_can_yaw_use_consistent_vehicle_sign(tmp_path):
     can.from_rcz_log(str(path), mask_interp_gaps=True)
     np.testing.assert_allclose(can.channels["Chassis Yaw Rate"].values, 12.0)
     assert can.metadata["yaw_rate_source"] == "rcz_can_12_200_pid_51"
+
+
+
+def test_rcz_stint_zero_does_not_read_resume_can_channels(tmp_path):
+    """Root-prefix parsing must not ingest later-stint channels."""
+    start = 1_700_000_000_000
+    early = start + np.arange(16, dtype="<i8") * 40
+    later = start + 120_000 + np.arange(16, dtype="<i8") * 40
+    path = tmp_path / "isolated-stints.rcz"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": start, "timeCreated": start, "laps": [],
+        }))
+        for prefix, timestamps in (("", early), ("resume_1/", later)):
+            z.writestr(prefix + "channel_1_100_0_1_1", timestamps.tobytes())
+            z.writestr(prefix + "channel_1_100_0_4_0",
+                       np.full(16, 15_000, dtype="<i4").tobytes())
+        z.writestr("resume_1/channel_12_200_51_1_1", later.tobytes())
+        z.writestr("resume_1/channel2_12_200_51_51_3",
+                   np.full(16, 10.0, dtype="<f8").tobytes())
+
+    root = DataLog()
+    root.from_rcz_log(str(path), target_stint=0)
+    assert "Chassis Yaw Rate" not in root.channels
+    assert root.metadata.get("yaw_rate_source") is None
+
+    resumed = DataLog()
+    resumed.from_rcz_log(str(path), target_stint=1)
+    np.testing.assert_allclose(resumed.channels["Chassis Yaw Rate"].values, 10)
+    assert resumed.metadata["yaw_rate_source"] == "rcz_can_12_200_pid_51"
