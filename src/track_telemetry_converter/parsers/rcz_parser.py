@@ -11,6 +11,7 @@ import numpy as np
 from ..channels import (
     CH_CG_ACCEL_LAT,
     CH_CG_ACCEL_LON,
+    CH_CG_ACCEL_VERT,
     CH_GPS_ALTITUDE,
     CH_GPS_HEADING,
     CH_GPS_LATITUDE,
@@ -545,14 +546,17 @@ def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoc
         )
         _parse_imu_channel(
             accel_prefix + "11_0",
-            CH_LEAN_ANGLE,
-            "deg",
+            CH_CG_ACCEL_VERT,
+            "G",
             1.0 / 10000.0,
             ts_key=accel_ts_file,
         )
-        data_log.metadata["lateral_accel_source"] = (
-            f"rcz_accelerometer_2_{accel_type}"
-        )
+        # Accelerometer channel 11 measures vertical acceleration
+        # including gravity (~1 G while stationary), not lean angle.
+        acceleration_source = f"rcz_accelerometer_2_{accel_type}"
+        data_log.metadata["lateral_accel_source"] = acceleration_source
+        data_log.metadata["longitudinal_accel_source"] = acceleration_source
+        data_log.metadata["vertical_accel_source"] = acceleration_source
 
     # 7. Parse Gyroscope / Yaw Rate (device 3, type 302 / 202 / 102)
     gyro_z_file = None
@@ -566,8 +570,10 @@ def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoc
             break
 
     if gyro_z_file:
+        # Device-3 gyroscope Z has the opposite sign from the
+        # positive vehicle/CAN yaw convention used for this channel.
         _parse_imu_channel(gyro_z_file, CH_YAW_RATE, "deg/s",
-                           1.0 / 1000.0, ts_key=gyro_ts_file)
+                           -1.0 / 1000.0, ts_key=gyro_ts_file)
         data_log.metadata["yaw_rate_source"] = f"rcz_gyro_3_{g_type}"
 
 def _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel):
