@@ -130,6 +130,8 @@ class _FakeXrkCol:
 
 
 class _FakeXrkTable:
+    units: str = ""
+
     def __init__(self, cols):
         self._cols = cols
         self.num_rows = len(next(iter(cols.values()))) if cols else 0

@@ -203,7 +203,8 @@ def _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, 
         except Exception:
             meta_obj = None
 
-        raw_meta = asdict(meta_obj) if is_dataclass(meta_obj) else {}
+        raw_meta = asdict(meta_obj) if (meta_obj is not None and is_dataclass(meta_obj)
+                                        and not isinstance(meta_obj, type)) else {}
         inventory[ch_name] = {"metadata": raw_meta, "samples": table.num_rows,
                               "mapped_channel": None}
         alias = _resolve_alias(ch_name, aliases_casefold)
