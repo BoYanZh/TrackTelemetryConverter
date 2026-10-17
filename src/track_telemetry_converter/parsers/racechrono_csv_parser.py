@@ -47,6 +47,10 @@ from ..provenance import (
     record_yaw_source,
 )
 
+# Canonical channels with a preferred raw source: the CAN/IMU sensor wins
+# over GPS/derived twins regardless of header order (cf. XRK_PRIORITY).
+_YAW_PRIORITY = {"imu yaw": 20}
+
 
 def _norm_header(name):
     """Normalize a header for map lookup (case/underscores/dashes)."""
@@ -90,7 +94,7 @@ def _read_racechrono_units(log_lines, header_idx):
 
 
 
-def _build_racechrono_columns(data_log, channel_names, unit_row):
+def _build_racechrono_columns(data_log, channel_names, unit_row, is_aim_csv=False):
     """Create channels and per-column (index, channel, factor, offset) specs.
 
     Returns (col_specs, lap_number_idx). Unit factors convert file units to
@@ -145,6 +149,7 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
         "intake air temp": {"name": CH_INTAKE_TEMP, "units": "C"},
         "oilpressure0": {"name": CH_ENGINE_OIL_PRESS, "units": "kPa"},
         "yawrate": {"name": CH_YAW_RATE, "units": "deg/s"},
+        "imu yaw": {"name": CH_YAW_RATE, "units": "deg/s"},
         "wheelspeedfl": {"name": CH_WHEEL_SPEED_FL, "units": "km/h"},
         "wheelspeedfr": {"name": CH_WHEEL_SPEED_FR, "units": "km/h"},
         "wheelspeedrl": {"name": CH_WHEEL_SPEED_RL, "units": "km/h"},
@@ -187,8 +192,16 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
     lap_number_idx = -1
     col_unit_map = {}
     # First raw column wins each canonical channel (historical behavior);
-    # every loser is recorded instead of silently dropped.
+    # every loser is recorded instead of silently dropped. The IMU yaw
+    # sensor wins over GPS/derived yaw regardless of header order (cf. the
+    # XRK CAN-IMU priority).
     winners = {}
+    priorities = {}
+    # AiM GR86 ZN8 protocol: PPS is the accelerator pedal. Mirror the XRK
+    # gate (GR86 vehicle + AiM source); otherwise PPS stays an unverified
+    # throttle fallback.
+    vehicle = str(data_log.metadata.get("vehicle_id", ""))
+    aim_gr86_pps = (is_aim_csv and "GR86" in vehicle.upper())
 
     for i, raw_name in enumerate(channel_names):
         raw_lower = _norm_header(raw_name)
@@ -214,16 +227,31 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
                 motec_name = raw_name
                 motec_units = unit_str
 
+        if raw_lower == "pps" and aim_gr86_pps:
+            motec_name = CH_ACCELERATOR_POS
+            motec_units = "%"
+
         col_unit_map[raw_name] = unit_str.lower()
+        priority = _YAW_PRIORITY.get(raw_lower, 10)
 
         if motec_name not in data_log.channels:
             data_log.add_channel(motec_name, motec_units, float, 0)
             active_columns.append((i, motec_name, raw_name))
             winners[motec_name] = raw_name
+            priorities[motec_name] = priority
+        elif priority > priorities.get(motec_name, 10):
+            # A higher-priority source supersedes the earlier column.
+            record_dropped_duplicate(data_log, motec_name, raw_name, winners[motec_name])
+            active_columns = [
+                (ii, mm, rr) for (ii, mm, rr) in active_columns if mm != motec_name
+            ]
+            active_columns.append((i, motec_name, raw_name))
+            winners[motec_name] = raw_name
+            priorities[motec_name] = priority
         else:
             record_dropped_duplicate(data_log, motec_name, winners[motec_name], raw_name)
 
-    _record_racechrono_provenance(data_log, winners)
+    _record_racechrono_provenance(data_log, winners, aim_gr86_pps)
 
     # Precompute per-column transforms so the hot row loop does no string
     # normalization, dict lookups, or channel-attribute writes per cell.
@@ -247,12 +275,19 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
             factor, offset = 5.0 / 9.0, -32.0
         elif unit_lower == "bar" and "press" in name.lower():
             factor = 100.0
-        elif cell_lower in ("yaw rate", "z rate of rotation", "y rate of rotation") and name == CH_YAW_RATE:
+        elif cell_lower in ("yaw rate", "z rate of rotation", "y rate of rotation",
+                              "gps gyro", "imu yaw") and name == CH_YAW_RATE:
+            # The whole recorded-yaw family shares one sign convention here:
+            # raw GPS Gyro / YawRate / IMU YAW columns of one AiM session are
+            # the same signal (corr > 0.89), so they must convert identically
+            # instead of depending on which column wins. Absolute sign stays
+            # unverified (yaw_axis_sign_verified) until tied to a vehicle CAN
+            # reference on the same car.
             factor = -1.0
         col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
     return col_specs, lap_number_idx
 
-def _record_racechrono_provenance(data_log, winners):
+def _record_racechrono_provenance(data_log, winners, aim_gr86_pps=False):
     """Record pedal semantics and yaw source for the winning columns."""
     pedal_raw = winners.get(CH_ACCELERATOR_POS)
     if pedal_raw is not None and _norm_header(pedal_raw) == "accelerator pos":
@@ -263,6 +298,19 @@ def _record_racechrono_provenance(data_log, winners):
                 "RaceChrono PID 10071 documents accelerator_pos as Accelerator "
                 "Pedal Pos; throttle body is the separate PID 10025 "
                 "(docs/research/racechrono-pid-tables.md)"
+            ),
+        )
+    if pedal_raw is not None and _norm_header(pedal_raw) == "pps" and aim_gr86_pps:
+        # Same documented basis as the XRK GR86 gate: AiM GR86 ZN8 PPS is
+        # the accelerator pedal.
+        record_channel_provenance(
+            data_log, CH_ACCELERATOR_POS, pedal_raw,
+            power_semantics="accelerator_pedal",
+            semantics_basis=(
+                "AiM GR86 ZN8 documented PPS + declared GR86 vehicle + AiM "
+                "source "
+                "(https://www.aim-sportline.com/download/ecu/stock/toyota/"
+                "Toyota_GR86_ZN8_101_eng.pdf)"
             ),
         )
     throttle_raw = winners.get(CH_THROTTLE_POS)
@@ -561,7 +609,12 @@ def parse_racechrono_log(data_log, log_lines, target_lap=None):
 
     channel_names = raw_headers[1:]
 
-    col_specs, lap_number_idx = _build_racechrono_columns(data_log, channel_names, unit_row)
+    is_aim_csv = any(
+        "AiM CSV File" in line for line in log_lines[:header_idx + 1]
+    )
+    col_specs, lap_number_idx = _build_racechrono_columns(
+        data_log, channel_names, unit_row, is_aim_csv=is_aim_csv,
+    )
 
     # Parse target_lap filter if specified
     target_lap_str = None

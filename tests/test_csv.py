@@ -236,6 +236,41 @@ def test_racechrono_pedal_semantics_and_provenance():
     } in log.metadata["dropped_duplicate_columns"]
 
 
+def test_racechrono_aim_gr86_pps_is_pedal():
+    pre = ['"Format","AiM CSV File"\n', '"Vehicle","GR86 stock"\n']
+    body = ["Time (s),PPS,rpm\n", "s,%,rpm\n",
+            "0.0,10.0,3000.0\n", "1.0,20.0,4000.0\n"]
+    log = DataLog()
+    log.from_racechrono_log(pre + body)
+    assert np.array_equal(log.channels["Accelerator Pos"].values, [10.0, 20.0])
+    assert "Throttle Pos" not in log.channels
+    record = log.metadata["channel_provenance"]["Accelerator Pos"]
+    assert record["power_semantics"] == "accelerator_pedal"
+    assert "Toyota_GR86_ZN8" in record["semantics_basis"]
+
+    # Same columns without the GR86+AiM gate stay an unverified throttle.
+    plain = DataLog()
+    plain.from_racechrono_log(body)
+    assert np.array_equal(plain.channels["Throttle Pos"].values, [10.0, 20.0])
+    assert plain.metadata["channel_provenance"]["Throttle Pos"]["power_semantics"] == "unverified"
+
+
+def test_racechrono_imu_yaw_wins_regardless_of_order():
+    # Values ride with column names, not positions: IMU YAW always wins and
+    # the whole recorded-yaw family converts with one sign.
+    for order in (("GPS Gyro", "YawRate", "IMU YAW"), ("IMU YAW", "YawRate", "GPS Gyro")):
+        vals = {"GPS Gyro": (1.0, 4.0), "YawRate": (2.0, 5.0), "IMU YAW": (3.0, 6.0)}
+        lines = [f"Time (s),{','.join(order)}\n", "s,deg/s,deg/s,deg/s\n"]
+        for r in range(2):
+            lines.append(f"{float(r)},{','.join(str(vals[c][r]) for c in order)}\n")
+        log = DataLog()
+        log.from_racechrono_log(lines)
+        assert np.array_equal(log.channels["Chassis Yaw Rate"].values, [-3.0, -6.0])
+        assert log.metadata["yaw_rate_source"] == "racechrono_recorded_IMU YAW"
+        assert log.metadata["yaw_axis_sign_verified"] is False
+        assert len(log.metadata["dropped_duplicate_columns"]) == 2
+
+
 def test_racechrono_alpha_laps_and_empty_channel_cleanup():
     lines = ["Time (s),speed,lap_number,rpm\n", "s,km/h,,rpm\n"]
     for i, lap in enumerate(["X", "X", "X", "Y"]):
