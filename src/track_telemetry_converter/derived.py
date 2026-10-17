@@ -55,8 +55,10 @@ def calculate_math_channels(data_log, g_source="auto", gear_ratio_thresholds=Non
     derive_smoothed_accel(data_log)
     calculate_g_sum(data_log)
     derive_brake_pos(data_log)
-    calculate_input_rates(data_log)
+    # Mirror before rates so pedal-sourced files keep the same Throttle Pos
+    # Rate they had when the pedal was (mis)labeled Throttle Pos at parse.
     mirror_throttle_accel(data_log)
+    calculate_input_rates(data_log)
     if gear_ratio_thresholds is None and gearbox is not None:
         gear_ratio_thresholds = GEARBOX_PRESETS.get(str(gearbox).lower())
     if gear_ratio_thresholds is not None:
@@ -227,7 +229,7 @@ def calculate_input_rates(data_log):
 def mirror_throttle_accel(data_log):
     if CH_THROTTLE_POS not in data_log.channels and CH_ACCELERATOR_POS in data_log.channels:
         src = data_log.channels[CH_ACCELERATOR_POS]
-        data_log.add_channel(CH_THROTTLE_POS, "%", float, 2)
+        data_log.add_channel(CH_THROTTLE_POS, "%", float, src.decimals)
         data_log.channels[CH_THROTTLE_POS].messages = [Message(m.timestamp, m.value) for m in src.messages]
 
 
@@ -275,6 +277,7 @@ def derive_yaw_rate_from_gps_heading(data_log):
     data_log.add_channel(CH_YAW_RATE, "deg/s", float, 2)
     data_log.channels[CH_YAW_RATE].messages = [Message(times[i], yaw_rate_val[i]) for i in range(len(times))]
     data_log.metadata["yaw_rate_source"] = "gps_heading_derivative"
+    data_log.metadata["yaw_axis_sign_verified"] = False
 
 
 # Backward compatibility aliases

@@ -38,6 +38,16 @@ def test_tesla_unit_conversions():
     assert log.channels["GPS Latitude"].values[5] == float(raw[5][3])
 
 
+def test_tesla_yaw_source_recorded():
+    from conftest import _read_lines
+
+    log = DataLog()
+    log.from_tesla_log(_read_lines("tesla_sample.csv"))
+    assert "Chassis Yaw Rate" in log.channels
+    assert log.metadata["yaw_rate_source"] == "tesla_recorded_yaw rate (rad/s)"
+    assert log.metadata["yaw_axis_sign_verified"] is False
+
+
 def test_tesla_cumulative_timebase_across_lap_reset():
     rows = [_TESLA_HEADER]
     for et in (0, 1000, 2000):

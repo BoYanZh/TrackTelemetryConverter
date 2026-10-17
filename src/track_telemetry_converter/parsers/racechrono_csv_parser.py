@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 
 from ..channels import (
+    CH_ACCELERATOR_POS,
     CH_BRAKE_POS,
     CH_BRAKE_PRESS,
     CH_CG_ACCEL_LAT,
@@ -40,6 +41,11 @@ from ..channels import (
     CH_YAW_RATE,
 )
 from ..derived import derive_yaw_rate_from_gps_heading
+from ..provenance import (
+    record_channel_provenance,
+    record_dropped_duplicate,
+    record_yaw_source,
+)
 
 
 def _norm_header(name):
@@ -111,7 +117,7 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
         "lateral_acc": {"name": CH_CG_ACCEL_LAT, "units": "G"},
         "lean_angle": {"name": CH_LEAN_ANGLE, "units": "deg"},
         "longitudinal_acc": {"name": CH_CG_ACCEL_LON, "units": "G"},
-        "accelerator_pos": {"name": CH_THROTTLE_POS, "units": "%"},
+        "accelerator_pos": {"name": CH_ACCELERATOR_POS, "units": "%"},
         "brake_pos": {"name": CH_BRAKE_POS, "units": "%"},
         "brake_pressure": {"name": CH_BRAKE_PRESS, "units": "kPa"},
         "coolant_temp": {"name": CH_COOLANT_TEMP, "units": "C"},
@@ -180,6 +186,9 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
     active_columns = []
     lap_number_idx = -1
     col_unit_map = {}
+    # First raw column wins each canonical channel (historical behavior);
+    # every loser is recorded instead of silently dropped.
+    winners = {}
 
     for i, raw_name in enumerate(channel_names):
         raw_lower = _norm_header(raw_name)
@@ -210,6 +219,11 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
         if motec_name not in data_log.channels:
             data_log.add_channel(motec_name, motec_units, float, 0)
             active_columns.append((i, motec_name, raw_name))
+            winners[motec_name] = raw_name
+        else:
+            record_dropped_duplicate(data_log, motec_name, winners[motec_name], raw_name)
+
+    _record_racechrono_provenance(data_log, winners)
 
     # Precompute per-column transforms so the hot row loop does no string
     # normalization, dict lookups, or channel-attribute writes per cell.
@@ -237,6 +251,32 @@ def _build_racechrono_columns(data_log, channel_names, unit_row):
             factor = -1.0
         col_specs.append((col_idx + 1, data_log.channels[name], factor, offset))
     return col_specs, lap_number_idx
+
+def _record_racechrono_provenance(data_log, winners):
+    """Record pedal semantics and yaw source for the winning columns."""
+    pedal_raw = winners.get(CH_ACCELERATOR_POS)
+    if pedal_raw is not None and _norm_header(pedal_raw) == "accelerator pos":
+        record_channel_provenance(
+            data_log, CH_ACCELERATOR_POS, pedal_raw,
+            power_semantics="accelerator_pedal",
+            semantics_basis=(
+                "RaceChrono PID 10071 documents accelerator_pos as Accelerator "
+                "Pedal Pos; throttle body is the separate PID 10025 "
+                "(docs/research/racechrono-pid-tables.md)"
+            ),
+        )
+    throttle_raw = winners.get(CH_THROTTLE_POS)
+    if throttle_raw is not None and _norm_header(throttle_raw) == "pps":
+        # PPS without a vehicle/protocol gate cannot tell pedal from throttle
+        # body apart (cf. the XRK GR86-gated PPS handling).
+        record_channel_provenance(
+            data_log, CH_THROTTLE_POS, throttle_raw,
+            power_semantics="unverified",
+        )
+    yaw_raw = winners.get(CH_YAW_RATE)
+    if yaw_raw is not None:
+        record_yaw_source(data_log, f"racechrono_recorded_{yaw_raw}")
+
 
 def _parse_racechrono_rows(log_lines, header_idx, col_specs, lap_number_idx, target_lap_str):
     """Single pass over data rows; return per-lap timing metadata."""

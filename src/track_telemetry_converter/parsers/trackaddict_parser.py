@@ -13,6 +13,7 @@ import datetime
 import math
 
 from ..channels import (
+    CH_ACCELERATOR_POS,
     CH_BRAKE_POS,
     CH_CG_ACCEL_LAT,
     CH_CG_ACCEL_LON,
@@ -30,6 +31,7 @@ from ..channels import (
     CH_THROTTLE_POS,
     CH_VEHICLE_SPEED,
 )
+from ..provenance import record_channel_provenance, record_dropped_duplicate
 from .racechrono_csv_parser import _build_timing_laps
 
 _MPH_TO_KMH = 1.60934
@@ -56,7 +58,7 @@ _EXACT_COLUMNS = {
     "y": (CH_CG_ACCEL_LAT, "G", 2, 1.0, 0.0),
     "z": ("Accel Z", "G", 2, 1.0, 0.0),
     "throttle": (CH_THROTTLE_POS, "%", 2, 1.0, 0.0),
-    "accelerator pedal (%) *obd": (CH_THROTTLE_POS, "%", 2, 1.0, 0.0),
+    "accelerator pedal (%) *obd": (CH_ACCELERATOR_POS, "%", 2, 1.0, 0.0),
     "rpm": (CH_ENGINE_RPM, "rpm", 2, 1.0, 0.0),
     "mph": (CH_GROUND_SPEED, "km/h", 2, _MPH_TO_KMH, 0.0),
     "kph": (CH_GROUND_SPEED, "km/h", 2, 1.0, 0.0),
@@ -198,6 +200,7 @@ def _build_columns(data_log, headers):
 
     col_specs = []
     lap_idx = time_idx = utc_idx = -1
+    winners = {}
     for i, raw in enumerate(headers):
         key = raw.strip().lower()
         if key == "time":
@@ -218,7 +221,23 @@ def _build_columns(data_log, headers):
             out_name, out_unit, dec, factor, offset = spec
         if out_name not in data_log.channels:
             data_log.add_channel(out_name, out_unit, float, dec)
+            winners[out_name] = raw.strip()
+        else:
+            record_dropped_duplicate(data_log, out_name, winners[out_name], raw.strip())
+            continue
         col_specs.append((i, data_log.channels[out_name], factor, offset))
+    pedal_raw = winners.get(CH_ACCELERATOR_POS)
+    if pedal_raw is not None and pedal_raw.strip().lower() == "accelerator pedal (%) *obd":
+        # This format exports accelerator-pedal and throttle-position as
+        # separate OBD columns, so the pedal column is the accelerator.
+        record_channel_provenance(
+            data_log, CH_ACCELERATOR_POS, pedal_raw,
+            power_semantics="accelerator_pedal",
+            semantics_basis=(
+                "TrackAddict exports accelerator-pedal and throttle-position "
+                "as separate OBD columns; the pedal column is the accelerator"
+            ),
+        )
     return col_specs, lap_idx, time_idx, utc_idx
 
 

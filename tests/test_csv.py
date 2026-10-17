@@ -208,6 +208,34 @@ def test_racechrono_bar_brake_and_gyro_fallback():
     assert np.array_equal(log.channels["Foo"].values, [1.5, 2.5])
 
 
+def test_racechrono_pedal_semantics_and_provenance():
+    log = DataLog()
+    log.from_racechrono_log([
+        "Time (s),accelerator_pos,pps,yaw_rate,rpm,rpm\n",
+        "s,%,%,deg/s,rpm,rpm\n",
+        "0.0,10.0,20.0,5.0,3000.0,9999.0\n",
+        "1.0,11.0,21.0,6.0,4000.0,8888.0\n",
+    ])
+    # accelerator_pos is the pedal (RaceChrono PID 10071), not the throttle.
+    assert np.array_equal(log.channels["Accelerator Pos"].values, [10.0, 11.0])
+    assert np.array_equal(log.channels["Throttle Pos"].values, [20.0, 21.0])
+    prov = log.metadata["channel_provenance"]
+    assert prov["Accelerator Pos"]["power_semantics"] == "accelerator_pedal"
+    assert "10071" in prov["Accelerator Pos"]["semantics_basis"]
+    assert prov["Throttle Pos"]["power_semantics"] == "unverified"
+    # Recorded yaw keeps its negate convention but stays sign-unverified.
+    assert np.array_equal(
+        log.channels["Chassis Yaw Rate"].values, [-5.0, -6.0],
+    )
+    assert log.metadata["yaw_rate_source"] == "racechrono_recorded_yaw_rate"
+    assert log.metadata["yaw_axis_sign_verified"] is False
+    # First of the duplicate rpm columns wins; the loser is recorded.
+    assert np.array_equal(log.channels["Engine RPM"].values, [3000.0, 4000.0])
+    assert {
+        "canonical": "Engine RPM", "kept_raw": "rpm", "dropped_raw": "rpm",
+    } in log.metadata["dropped_duplicate_columns"]
+
+
 def test_racechrono_alpha_laps_and_empty_channel_cleanup():
     lines = ["Time (s),speed,lap_number,rpm\n", "s,km/h,,rpm\n"]
     for i, lap in enumerate(["X", "X", "X", "Y"]):

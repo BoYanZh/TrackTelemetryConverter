@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import datetime
 
-from ..channels import CHANNEL_ALIASES
+from ..channels import CH_ACCELERATOR_POS, CHANNEL_ALIASES
 from ..models import Message
+from ..provenance import record_channel_provenance
 
 
 def _parse_vbo_latlon(val_str, is_lon=False):
@@ -74,14 +75,46 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
         return
 
     col_idx_map = {}
+    # Several VBO writers emit the same signal twice (raw + `-calc`/`-canbus`
+    # variants). One sample per channel per row; later columns win (refined
+    # values sort last). The winner is recorded instead of being implicit.
+    raw_columns = {}
     for idx, col_name in enumerate(cols_raw):
         if col_name in CHANNEL_ALIASES:
             out_name, unit, dec = CHANNEL_ALIASES[col_name]
             if out_name not in data_log.channels:
                 data_log.add_channel(out_name, unit, float, dec)
+            raw_columns.setdefault(out_name, []).append(col_name)
+            # AiM BrakePress sources read in bar while the canonical channel
+            # is kPa (cf. xrk_parser pressure conversion).
+            factor = 100.0 if col_name == "BrakePress" else 1.0
             is_latlon = col_name in ("lat", "long")
             is_lon = (col_name == "long")
-            col_idx_map[idx] = (out_name, is_latlon, is_lon)
+            col_idx_map[idx] = (out_name, is_latlon, is_lon, factor)
+
+    for out_name, raws in raw_columns.items():
+        if len(raws) > 1:
+            record_channel_provenance(
+                data_log, out_name, raws[-1],
+                raw_columns=list(raws),
+                winner=raws[-1],
+                rule="last column wins (refined values sort last)",
+            )
+    pedal_raw = None
+    for raw in raw_columns.get(CH_ACCELERATOR_POS, []):
+        if "accelerator" in raw.lower():
+            pedal_raw = raw
+            break
+    if pedal_raw is not None:
+        record_channel_provenance(
+            data_log, CH_ACCELERATOR_POS, pedal_raw,
+            power_semantics="accelerator_pedal",
+            semantics_basis=(
+                "RaceChrono PID 10071 documents accelerator_pos as Accelerator "
+                "Pedal Pos; throttle body is the separate PID 10025 "
+                "(docs/research/racechrono-pid-tables.md)"
+            ),
+        )
 
     t0 = None
     for line_s in data_lines:
@@ -94,13 +127,13 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
             if t_rel < 0:
                 t_rel += 86400.0  # Handle midnight wrapping
             row_vals = {}
-            for idx, (out_name, is_latlon, is_lon) in col_idx_map.items():
+            for idx, (out_name, is_latlon, is_lon, factor) in col_idx_map.items():
                 try:
                     val_str = parts[idx]
                     if is_latlon:
                         v_val = _parse_vbo_latlon(val_str, is_lon=is_lon)
                     else:
-                        v_val = float(val_str)
+                        v_val = float(val_str) * factor
                     # Several VBO writers emit the same signal twice (raw +
                     # `-calc`/`-canbus` variants). One sample per channel per
                     # row; later columns win (refined values sort last).

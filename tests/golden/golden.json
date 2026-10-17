@@ -615,6 +615,7 @@
     "driver": "Driver",
     "vehicle_id": "Track Car",
     "venue_name": "Laguna Seca",
+    "yaw_axis_sign_verified": false,
     "yaw_rate_source": "gps_heading_derivative"
    },
    "traps": []
@@ -809,6 +810,7 @@
     "driver": "Driver",
     "vehicle_id": "Track Car",
     "venue_name": "Laguna Seca",
+    "yaw_axis_sign_verified": false,
     "yaw_rate_source": "gps_heading_derivative"
    },
    "traps": []
@@ -1598,6 +1600,7 @@
     "session": "Session 3",
     "time": "22:21:26",
     "venue_name": "Thunderhill East (Cyclone)",
+    "yaw_axis_sign_verified": false,
     "yaw_rate_source": "gps_heading_derivative"
    },
    "traps": []
@@ -1606,6 +1609,21 @@
  "racechrono_sample.csv__from_racechrono_log": {
   "parse": {
    "channels": {
+    "Accelerator Pos": {
+     "decimals": 1,
+     "first": [
+      1772927004.643,
+      100.0
+     ],
+     "last": [
+      1772927004.677,
+      100.0
+     ],
+     "max": 100.0,
+     "min": 100.0,
+     "n": 10,
+     "units": "%"
+    },
     "Brake Pos": {
      "decimals": 1,
      "first": [
@@ -1951,21 +1969,6 @@
      "n": 10,
      "units": "deg"
     },
-    "Throttle Pos": {
-     "decimals": 1,
-     "first": [
-      1772927004.643,
-      100.0
-     ],
-     "last": [
-      1772927004.677,
-      100.0
-     ],
-     "max": 100.0,
-     "min": 100.0,
-     "n": 10,
-     "units": "%"
-    },
     "device_update_rate": {
      "decimals": 5,
      "first": [
@@ -2090,11 +2093,96 @@
     ],
     "total_laps": 1
    },
-   "metadata": {},
+   "metadata": {
+    "channel_provenance": {
+     "Accelerator Pos": {
+      "power_semantics": "accelerator_pedal",
+      "raw_name": "accelerator_pos",
+      "semantics_basis": "RaceChrono PID 10071 documents accelerator_pos as Accelerator Pedal Pos; throttle body is the separate PID 10025 (docs/research/racechrono-pid-tables.md)"
+     },
+     "Chassis Yaw Rate": {
+      "raw_name": "racechrono_recorded_z_rate_of_rotation"
+     }
+    },
+    "dropped_duplicate_columns": [
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "Ground Speed",
+      "dropped_raw": "speed",
+      "kept_raw": "speed"
+     },
+     {
+      "canonical": "Ground Speed",
+      "dropped_raw": "speed",
+      "kept_raw": "speed"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "x_rate_of_rotation",
+      "dropped_raw": "x_rate_of_rotation",
+      "kept_raw": "x_rate_of_rotation"
+     },
+     {
+      "canonical": "y_rate_of_rotation",
+      "dropped_raw": "y_rate_of_rotation",
+      "kept_raw": "y_rate_of_rotation"
+     },
+     {
+      "canonical": "Chassis Yaw Rate",
+      "dropped_raw": "z_rate_of_rotation",
+      "kept_raw": "z_rate_of_rotation"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     }
+    ],
+    "yaw_axis_sign_verified": false,
+    "yaw_rate_source": "racechrono_recorded_z_rate_of_rotation"
+   },
    "traps": []
   },
   "processed": {
    "channels": {
+    "Accelerator Pos": {
+     "decimals": 1,
+     "first": [
+      1772927004.643,
+      100.0
+     ],
+     "last": [
+      1772927004.677,
+      100.0
+     ],
+     "max": 100.0,
+     "min": 100.0,
+     "n": 10,
+     "units": "%"
+    },
     "Brake Pos": {
      "decimals": 1,
      "first": [
@@ -2654,13 +2742,98 @@
     ],
     "total_laps": 1
    },
-   "metadata": {},
+   "metadata": {
+    "channel_provenance": {
+     "Accelerator Pos": {
+      "power_semantics": "accelerator_pedal",
+      "raw_name": "accelerator_pos",
+      "semantics_basis": "RaceChrono PID 10071 documents accelerator_pos as Accelerator Pedal Pos; throttle body is the separate PID 10025 (docs/research/racechrono-pid-tables.md)"
+     },
+     "Chassis Yaw Rate": {
+      "raw_name": "racechrono_recorded_z_rate_of_rotation"
+     }
+    },
+    "dropped_duplicate_columns": [
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "Ground Speed",
+      "dropped_raw": "speed",
+      "kept_raw": "speed"
+     },
+     {
+      "canonical": "Ground Speed",
+      "dropped_raw": "speed",
+      "kept_raw": "speed"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     },
+     {
+      "canonical": "x_rate_of_rotation",
+      "dropped_raw": "x_rate_of_rotation",
+      "kept_raw": "x_rate_of_rotation"
+     },
+     {
+      "canonical": "y_rate_of_rotation",
+      "dropped_raw": "y_rate_of_rotation",
+      "kept_raw": "y_rate_of_rotation"
+     },
+     {
+      "canonical": "Chassis Yaw Rate",
+      "dropped_raw": "z_rate_of_rotation",
+      "kept_raw": "z_rate_of_rotation"
+     },
+     {
+      "canonical": "device_update_rate",
+      "dropped_raw": "device_update_rate",
+      "kept_raw": "device_update_rate"
+     }
+    ],
+    "yaw_axis_sign_verified": false,
+    "yaw_rate_source": "racechrono_recorded_z_rate_of_rotation"
+   },
    "traps": []
   }
  },
  "vbo_sample.vbo__from_vbo_log": {
   "parse": {
    "channels": {
+    "Accelerator Pos": {
+     "decimals": 2,
+     "first": [
+      0.0,
+      0.0
+     ],
+     "last": [
+      149.89999999999418,
+      21.569
+     ],
+     "max": 80.539,
+     "min": 0.0,
+     "n": 1500,
+     "units": "%"
+    },
     "Brake Pos": {
      "decimals": 2,
      "first": [
@@ -2871,21 +3044,6 @@
      "n": 1500,
      "units": "deg"
     },
-    "Throttle Pos": {
-     "decimals": 2,
-     "first": [
-      0.0,
-      0.0
-     ],
-     "last": [
-      149.89999999999418,
-      21.569
-     ],
-     "max": 80.539,
-     "min": 0.0,
-     "n": 1500,
-     "units": "%"
-    },
     "Vehicle Speed": {
      "decimals": 2,
      "first": [
@@ -2905,11 +3063,61 @@
    "datetime": "2026-01-01T10:00:00",
    "duration": 149.89999999999418,
    "laps_info": {},
-   "metadata": {},
+   "metadata": {
+    "channel_provenance": {
+     "Accelerator Pos": {
+      "power_semantics": "accelerator_pedal",
+      "raw_name": "accelerator_pos-canbus",
+      "semantics_basis": "RaceChrono PID 10071 documents accelerator_pos as Accelerator Pedal Pos; throttle body is the separate PID 10025 (docs/research/racechrono-pid-tables.md)"
+     },
+     "CG Accel Lateral": {
+      "raw_columns": [
+       "latacc",
+       "latacc-calc"
+      ],
+      "raw_name": "latacc-calc",
+      "rule": "last column wins (refined values sort last)",
+      "winner": "latacc-calc"
+     },
+     "CG Accel Longitudinal": {
+      "raw_columns": [
+       "longacc",
+       "longacc-calc"
+      ],
+      "raw_name": "longacc-calc",
+      "rule": "last column wins (refined values sort last)",
+      "winner": "longacc-calc"
+     },
+     "Ground Speed": {
+      "raw_columns": [
+       "velocity",
+       "velocity-calc"
+      ],
+      "raw_name": "velocity-calc",
+      "rule": "last column wins (refined values sort last)",
+      "winner": "velocity-calc"
+     }
+    }
+   },
    "traps": []
   },
   "processed": {
    "channels": {
+    "Accelerator Pos": {
+     "decimals": 2,
+     "first": [
+      0.0,
+      0.0
+     ],
+     "last": [
+      149.70000000000002,
+      21.960999999988523
+     ],
+     "max": 80.53899999987398,
+     "min": 0.0,
+     "n": 1498,
+     "units": "%"
+    },
     "Brake Pos": {
      "decimals": 2,
      "first": [
@@ -3260,6 +3468,41 @@
    "duration": 149.70000000000002,
    "laps_info": {},
    "metadata": {
+    "channel_provenance": {
+     "Accelerator Pos": {
+      "power_semantics": "accelerator_pedal",
+      "raw_name": "accelerator_pos-canbus",
+      "semantics_basis": "RaceChrono PID 10071 documents accelerator_pos as Accelerator Pedal Pos; throttle body is the separate PID 10025 (docs/research/racechrono-pid-tables.md)"
+     },
+     "CG Accel Lateral": {
+      "raw_columns": [
+       "latacc",
+       "latacc-calc"
+      ],
+      "raw_name": "latacc-calc",
+      "rule": "last column wins (refined values sort last)",
+      "winner": "latacc-calc"
+     },
+     "CG Accel Longitudinal": {
+      "raw_columns": [
+       "longacc",
+       "longacc-calc"
+      ],
+      "raw_name": "longacc-calc",
+      "rule": "last column wins (refined values sort last)",
+      "winner": "longacc-calc"
+     },
+     "Ground Speed": {
+      "raw_columns": [
+       "velocity",
+       "velocity-calc"
+      ],
+      "raw_name": "velocity-calc",
+      "rule": "last column wins (refined values sort last)",
+      "winner": "velocity-calc"
+     }
+    },
+    "yaw_axis_sign_verified": false,
     "yaw_rate_source": "gps_heading_derivative"
    },
    "traps": []

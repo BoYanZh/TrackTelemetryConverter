@@ -93,6 +93,21 @@ def test_trackaddict_laps_from_lap_column():
     assert log.laps_info["fastest_time"] == 40.0
 
 
+def test_trackaddict_pedal_maps_to_accelerator():
+    lines = [
+        '"Time","Latitude","Longitude",'
+        '"Accelerator Pedal (%) *OBD","Throttle Position (%) *OBD"\n',
+        "0.0,41.0,-88.0,10.0,12.0\n",
+        "1.0,41.1,-88.1,20.0,22.0\n",
+    ]
+    log = DataLog()
+    log.from_trackaddict_log(lines)
+    assert np.array_equal(log.channels["Accelerator Pos"].values, [10.0, 20.0])
+    assert np.array_equal(log.channels["Throttle Pos"].values, [12.0, 22.0])
+    prov = log.metadata["channel_provenance"]
+    assert prov["Accelerator Pos"]["power_semantics"] == "accelerator_pedal"
+
+
 def test_trackaddict_target_lap_and_errors(capsys):
     lines = [
         '"Time","Lap","Latitude","Longitude","Speed (Km/h)"\n',

@@ -31,6 +31,7 @@ from ..channels import (
     CH_TIRE_PRESS_RR,
     CH_YAW_RATE,
 )
+from ..provenance import record_yaw_source
 from .racechrono_csv_parser import _build_timing_laps
 
 _MPH_TO_KMH = 1.609344
@@ -193,6 +194,8 @@ def parse_tesla_log(data_log, log_lines, target_lap=None):
 
     laps_timing = _parse_data_rows(data_log, log_lines, header_idx, col_specs,
                                    lap_idx, et_idx, target_lap_str)
+    if CH_YAW_RATE in data_log.channels:
+        record_yaw_source(data_log, "tesla_recorded_yaw rate (rad/s)")
     if target_lap_str is not None and target_lap_str not in laps_timing:
         print(f"WARNING: Lap '{target_lap}' not found in Tesla file; keeping all laps")
 

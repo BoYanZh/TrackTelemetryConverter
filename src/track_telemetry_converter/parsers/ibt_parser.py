@@ -8,8 +8,15 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..channels import CH_LAP_NUMBER, IBT_BRAKE_PRESS_MAP, IBT_CHANNEL_MAP, IBT_WHEEL_SPEED_MAP
+from ..channels import (
+    CH_LAP_NUMBER,
+    CH_YAW_RATE,
+    IBT_BRAKE_PRESS_MAP,
+    IBT_CHANNEL_MAP,
+    IBT_WHEEL_SPEED_MAP,
+)
 from ..models import Message
+from ..provenance import record_yaw_source
 
 
 class _IbtGeometry(NamedTuple):
@@ -144,6 +151,9 @@ def parse_ibt_log(data_log, ibt_file_path):
 
     for ibt_name, ch_name in IBT_BRAKE_PRESS_MAP:
         _add_ibt_channel(data_log, var_meta, raw_data, geo, times, ibt_name, ch_name, "kPa", 2, lambda x: x * 100.0)
+
+    if CH_YAW_RATE in data_log.channels:
+        record_yaw_source(data_log, "ibt_recorded_YawRate")
 
     # --- 6. Lap detection: raw Lap counter transitions ---
     # Every forward increment of the iRacing 'Lap' counter represents a

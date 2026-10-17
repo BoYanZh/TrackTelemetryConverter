@@ -586,6 +586,7 @@ def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoc
         _parse_imu_channel(gyro_z_file, CH_YAW_RATE, "deg/s",
                            -1.0 / 1000.0, ts_key=gyro_ts_file)
         data_log.metadata["yaw_rate_source"] = f"rcz_gyro_3_{g_type}"
+        data_log.metadata["yaw_axis_sign_verified"] = True
 
 def _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel):
     """Populate primary OBD (device 12) CAN channels."""
@@ -638,6 +639,8 @@ def _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mas
                 data_log.metadata["yaw_rate_source"] = (
                     f"rcz_can_12_{dev_sub}_pid_51"
                 )
+                # CAN yaw is the vehicle reference itself.
+                data_log.metadata["yaw_axis_sign_verified"] = True
             elif ch_name not in data_log.channels:
                 vals_processed = values * ch_scale + ch_offset
                 if pid == "1004":

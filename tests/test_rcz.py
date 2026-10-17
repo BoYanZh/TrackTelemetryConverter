@@ -651,6 +651,7 @@ def test_rcz_imu_axes_and_can_yaw_use_consistent_vehicle_sign(tmp_path):
     assert gyro.metadata["lateral_accel_source"] == "rcz_accelerometer_2_101"
     assert gyro.metadata["vertical_accel_source"] == "rcz_accelerometer_2_101"
     assert gyro.metadata["yaw_rate_source"] == "rcz_gyro_3_102"
+    assert gyro.metadata["yaw_axis_sign_verified"] is True
 
     # CAN yaw uses the same positive-vehicle sign and supersedes device 3.
     with zipfile.ZipFile(path, "a") as z:
@@ -661,6 +662,7 @@ def test_rcz_imu_axes_and_can_yaw_use_consistent_vehicle_sign(tmp_path):
     can.from_rcz_log(str(path), mask_interp_gaps=True)
     np.testing.assert_allclose(can.channels["Chassis Yaw Rate"].values, 12.0)
     assert can.metadata["yaw_rate_source"] == "rcz_can_12_200_pid_51"
+    assert can.metadata["yaw_axis_sign_verified"] is True
 
 
 
