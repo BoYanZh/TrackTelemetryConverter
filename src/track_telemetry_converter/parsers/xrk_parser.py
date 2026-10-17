@@ -11,10 +11,39 @@ Requires: pip install libxrk
 from __future__ import annotations
 
 import datetime
+from dataclasses import asdict, is_dataclass
 
 import numpy as np
 
-from ..channels import CHANNEL_ALIASES
+from ..channels import (
+    CH_ACCELERATOR_POS,
+    CH_BRAKE_PRESS,
+    CH_CG_ACCEL_LAT,
+    CH_CG_ACCEL_LON,
+    CH_COOLANT_TEMP,
+    CH_ENGINE_OIL_PRESS,
+    CH_ENGINE_OIL_TEMP,
+    CH_YAW_RATE,
+    CHANNEL_ALIASES,
+)
+
+# XRK-specific aliases and priorities: CAN IMU wins over internal IMU when both
+# are recorded. Every candidate remains in metadata; samples are never blended.
+XRK_ALIASES = {
+    "inlineacc": (CH_CG_ACCEL_LON, "G", 4),
+    "imu_longg": (CH_CG_ACCEL_LON, "G", 4),
+    "imu_lateral_g": (CH_CG_ACCEL_LAT, "G", 4),
+    "yawrate": (CH_YAW_RATE, "deg/s", 3),
+    "imu_yaw": (CH_YAW_RATE, "deg/s", 3),
+    "brakepress": (CH_BRAKE_PRESS, "kPa", 2),
+    "brake press": (CH_BRAKE_PRESS, "kPa", 2),
+    "brake pressure": (CH_BRAKE_PRESS, "kPa", 2),
+    "oiltemp": (CH_ENGINE_OIL_TEMP, "C", 2),
+    "ect": (CH_COOLANT_TEMP, "C", 2),
+    "oilpressure0": (CH_ENGINE_OIL_PRESS, "kPa", 2),
+}
+XRK_PRIORITY = {"imu_longg": 20, "imu_lateral_g": 20, "imu_yaw": 20}
+
 
 
 def _unit_to_canonical(unit):
@@ -25,7 +54,7 @@ def _unit_to_canonical(unit):
         "mph": "mph",
         "deg": "deg", "°": "deg", "rpm": "rpm", "g": "G", "m": "m",
         "c": "C", "°c": "C", "f": "F", "°f": "F",
-        "bar": "bar", "v": "V", "%": "%",
+        "bar": "bar", "kpa": "kPa", "pa": "Pa", "v": "V", "%": "%",
     }.get(unit_l, unit or "")
 
 
@@ -42,6 +71,9 @@ def _convert_values(values, source_unit, target_unit):
         return result * 1.609344
     if source == "km/h" and target == "m/s":
         return result / 3.6
+    if source in {"bar", "kPa", "Pa"} and target in {"bar", "kPa", "Pa"}:
+        scales = {"bar": 100000.0, "kPa": 1000.0, "Pa": 1.0}
+        return result * (scales[source] / scales[target])
     if source == "F" and target == "C":
         return (result - 32.0) * (5.0 / 9.0)
     return result
@@ -136,7 +168,7 @@ def _compute_origin_ms(raw_channels, laps):
 
 def _resolve_alias(ch_name, aliases_casefold):
     """Map an XRK channel name to its (name, unit, decimals) alias."""
-    alias = CHANNEL_ALIASES.get(ch_name)
+    alias = XRK_ALIASES.get(ch_name.strip().casefold()) or CHANNEL_ALIASES.get(ch_name)
     if alias is None:
         alias = aliases_casefold.get(ch_name.strip().casefold())
     return alias
@@ -157,26 +189,57 @@ def _read_channel_samples(table, ch_name):
 
 def _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, channel_metadata_cls):
     """Populate channels from XRK channel tables."""
+    inventory = data_log.metadata.setdefault("xrk_channel_inventory", {})
+    provenance = data_log.metadata.setdefault("channel_provenance", {})
+    selected_priority = {}
     for ch_name, table in raw_channels.items():
         if ch_name is None or table is None or table.num_rows == 0:
             continue
         if ch_name.lower() == "timecodes":
             continue
 
-        alias = _resolve_alias(ch_name, aliases_casefold)
-        if alias is None:
-            continue
-
-        out_name, unit, dec = alias
         try:
             meta_obj = channel_metadata_cls.from_channel_table(table)
         except Exception:
             meta_obj = None
 
+        raw_meta = asdict(meta_obj) if is_dataclass(meta_obj) else {}
+        inventory[ch_name] = {"metadata": raw_meta, "samples": table.num_rows,
+                              "mapped_channel": None}
+        alias = _resolve_alias(ch_name, aliases_casefold)
+        if alias is None:
+            continue
+        out_name, unit, dec = alias
+        # AiM GR86 ZN8 protocol: PPS is pedal; TPS is throttle body.
+        # Restrict this profile to declared GR86 recordings with a CAN source.
+        gr86_pps = (ch_name.strip().casefold() == "pps" and
+                    "GR86" in str(data_log.metadata.get("vehicle_id", "")).upper() and
+                    getattr(meta_obj, "source_type", None) == 9)
+        if gr86_pps:
+            out_name = CH_ACCELERATOR_POS
         samples = _read_channel_samples(table, ch_name)
         if samples is None:
             continue
         timecodes_ms, values = samples
+        unique = np.unique(timecodes_ms)
+        intervals = np.diff(unique)
+        series_hz = float(1000.0 / np.median(intervals)) if len(intervals) else None
+        record = {"raw_name": ch_name, **raw_meta, "source_units": getattr(meta_obj, "units", ""),
+                  "output_units": unit, "series_sample_rate_hz": series_hz,
+                  "native_acquisition_rate_hz": None,
+                  "source_start_ms": float(timecodes_ms.min()),
+                  "source_end_ms": float(timecodes_ms.max()),
+                  "power_semantics": "unverified" if ch_name.casefold() == "pps" else None}
+        if gr86_pps:
+            record["power_semantics"] = "accelerator_pedal"
+            record["semantics_basis"] = "AiM GR86 ZN8 documented PPS + declared GR86 vehicle + CAN source"
+            record["semantics_reference"] = "https://www.aim-sportline.com/download/ecu/stock/toyota/Toyota_GR86_ZN8_101_eng.pdf"
+        inventory[ch_name].update(mapped_channel=out_name, series_sample_rate_hz=series_hz)
+        priority = XRK_PRIORITY.get(ch_name.strip().casefold(), 10)
+        if out_name in selected_priority and priority <= selected_priority[out_name]:
+            continue
+        selected_priority[out_name] = priority
+        provenance[out_name] = record
 
         source_unit = getattr(meta_obj, "units", "") if meta_obj is not None else ""
         values = _convert_values(values, source_unit, unit)
@@ -276,3 +339,7 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
     _filter_xrk_lap(data_log, laps_info, target_lap)
 
     data_log.laps_info = laps_info
+    yaw = data_log.metadata.get("channel_provenance", {}).get(CH_YAW_RATE)
+    if yaw:
+        data_log.metadata["yaw_rate_source"] = "xrk_recorded_" + yaw["raw_name"]
+        data_log.metadata["yaw_axis_sign_verified"] = False

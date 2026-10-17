@@ -59,7 +59,7 @@ def test_xrk_convert_values_units():
     assert list(_convert_values([5.0], "km/h", "km/h")) == [5.0]
     assert list(_convert_values([5.0], "V", "V")) == [5.0]
     assert list(_convert_values([5.0], "", "km/h")) == [5.0]
-    assert list(_convert_values([100.0], "bar", "kPa")) == [100.0]
+    assert list(_convert_values([100.0], "bar", "kPa")) == [10000.0]
 
 
 def test_xrk_dedupe_samples():
@@ -236,3 +236,62 @@ def test_xrk_stub_laps_failure(monkeypatch, capsys):
     log.from_xrk_log("stub.xrk")
     assert "Failed to parse XRK laps" in capsys.readouterr().out
     assert log.laps_info["total_laps"] == 0
+
+
+def test_xrk_sensor_provenance_priority_and_pressure():
+    from dataclasses import dataclass
+    @dataclass
+    class Meta:
+        units: str = "g"
+        source_type: int = 9
+        function: str = "Inline Acceleration"
+        @classmethod
+        def from_channel_table(cls, table):
+            return cls(units=getattr(table, "units", "g"))
+    def table(name, values, unit="g"):
+        t = _FakeXrkTable({"timecodes": _FakeXrkCol([1000., 1020., 1040.]),
+                           name: _FakeXrkCol(values)})
+        t.units = unit
+        return t
+    channels = {"IMU_LongG": table("IMU_LongG", [.1, .2, .3]),
+                "InlineAcc": table("InlineAcc", [1., 2., 3.]),
+                "BrakePress": table("BrakePress", [0., 20., 40.], "bar"),
+                "PPS": table("PPS", [0., 50., 100.], "%"),
+                "unknown_sensor": table("unknown_sensor", [1., 2., 3.])}
+    for ordered in (channels, dict(reversed(list(channels.items())))):
+        log = DataLog()
+        xrk_parser._parse_xrk_channels(log, ordered, {}, 1000., Meta)
+        np.testing.assert_allclose(log.channels["CG Accel Longitudinal"].values, [.1, .2, .3])
+        np.testing.assert_allclose(log.channels["Brake Press"].values, [0., 2000., 4000.])
+        assert log.channels["Brake Press"].units == "kPa"
+        np.testing.assert_allclose(log.channels["Brake Press"].timestamps, [0., .02, .04])
+        meta = log.metadata["channel_provenance"]
+        assert meta["CG Accel Longitudinal"]["raw_name"] == "IMU_LongG"
+        assert meta["Throttle Pos"]["power_semantics"] == "unverified"
+        assert meta["Brake Press"]["source_units"] == "bar"
+        assert meta["Brake Press"]["series_sample_rate_hz"] == 50.
+        assert meta["Brake Press"]["native_acquisition_rate_hz"] is None
+        assert "unknown_sensor" in log.metadata["xrk_channel_inventory"]
+
+
+def test_gr86_can_pps_is_pedal_with_documented_basis():
+    from dataclasses import dataclass
+    @dataclass
+    class Meta:
+        units: str = "%"
+        source_type: int = 9
+        @classmethod
+        def from_channel_table(cls, table):
+            return cls()
+    channels = {"PPS": _FakeXrkTable({"timecodes": _FakeXrkCol([1000., 1020.]),
+                                      "PPS": _FakeXrkCol([0., 100.])})}
+    for vehicle, expected in [("GR86 stock", "Accelerator Pos"), ("unknown", "Throttle Pos")]:
+        log = DataLog()
+        log.metadata["vehicle_id"] = vehicle
+        xrk_parser._parse_xrk_channels(log, channels, {}, 1000., Meta)
+        assert expected in log.channels
+        record = log.metadata["channel_provenance"][expected]
+        assert record["power_semantics"] == ("accelerator_pedal" if "GR86" in vehicle else "unverified")
+        if expected == "Accelerator Pos":
+            assert "Toyota_GR86_ZN8" in record["semantics_reference"]
+            assert "Throttle Pos" not in log.channels
