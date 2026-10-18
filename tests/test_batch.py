@@ -96,3 +96,42 @@ def test_batch_empty_directory_errors():
         result = _run_cli_in_process([tmp_dir, "AUTO"])
         assert result.returncode != 0
         assert "No convertible logs" in result.stdout
+
+
+def test_auto_whitelist_matches_shared_constant():
+    from track_telemetry_converter.cli import _BATCH_AUTO_EXTENSIONS
+    from track_telemetry_converter.parsers import SUPPORTED_INPUT_EXTENSIONS
+
+    assert set(_BATCH_AUTO_EXTENSIONS) == set(SUPPORTED_INPUT_EXTENSIONS)
+    # Spot-check: convertible formats in, video/outputs/sidecars out.
+    for ext in (".rcz", ".csv", ".vbo", ".dlap", ".ibt",
+                ".xrk", ".xrz", ".fit", ".log", ".can", ".trc", ".asc"):
+        assert ext in SUPPORTED_INPUT_EXTENSIONS
+    for ext in (".mp4", ".mkv", ".webm", ".ld", ".ldx", ".dbc",
+                ".yaml", ".txt", ".png", ""):
+        assert ext not in SUPPORTED_INPUT_EXTENSIONS
+
+
+def test_batch_auto_skips_video_and_unrelated_files():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _copy_fixture("racechrono_sample.csv", os.path.join(tmp_dir, "a.csv"))
+        for name, content in (("clip.mp4", b"\x00\x00\x00 ftyp"),
+                              ("clip.mkv", b"\x1a\x45\xdf\xa3"),
+                              ("notes.txt", b"hello"),
+                              ("job.yaml", b"key: value")):
+            with open(os.path.join(tmp_dir, name), "wb") as handle:
+                handle.write(content)
+
+        result = _run_cli_in_process([tmp_dir, "AUTO"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "1 converted, 4 skipped, 0 failed" in result.stdout
+        assert "unsupported extension" in result.stdout
+        assert os.path.isfile(os.path.join(tmp_dir, "a.ld"))
+
+
+def test_batch_help_lists_whitelisted_extensions():
+    from track_telemetry_converter.cli import build_parser
+
+    help_text = build_parser().format_help()
+    assert ".rcz" in help_text
+    assert ".mp4" not in help_text

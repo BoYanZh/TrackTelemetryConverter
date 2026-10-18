@@ -59,6 +59,36 @@ def test_csv_export_uses_timestamp_union_and_handles_empty_channels():
         os.remove(tmp_path)
 
 
+def test_csv_export_preserves_gps_precision():
+    """GPS columns must round-trip within centimetres (%.6g keeps ~10 m steps)."""
+    log = DataLog()
+    log.add_channel("Ground Speed", "km/h", float, 2)
+    log.channels["Ground Speed"].messages = [Message(i / 20.0, 100.0) for i in range(41)]
+    log.add_channel("GPS Latitude", "deg", float, 7)
+    log.channels["GPS Latitude"].messages = [
+        Message(i / 20.0, 39.5362314 + i * 1e-6) for i in range(41)
+    ]
+    log.add_channel("GPS Longitude", "deg", float, 7)
+    log.channels["GPS Longitude"].messages = [
+        Message(i / 20.0, -122.3395612 - i * 1e-6) for i in range(41)
+    ]
+
+    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        assert write_csv(log, tmp_path)
+        with open(tmp_path, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        header = rows[0]
+        lat_i = header.index("GPS Latitude")
+        lon_i = header.index("GPS Longitude")
+        for row, i in zip(rows[1:], range(41), strict=True):
+            assert abs(float(row[lat_i]) - (39.5362314 + i * 1e-6)) < 5e-8
+            assert abs(float(row[lon_i]) - (-122.3395612 - i * 1e-6)) < 5e-8
+    finally:
+        os.remove(tmp_path)
+
+
 def test_xml_indent():
     root = ET.Element("root")
     ET.SubElement(root, "child").text = "value"

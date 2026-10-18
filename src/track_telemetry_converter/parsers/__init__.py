@@ -25,7 +25,54 @@ SUPPORTED_LOG_TYPES = (
     "IBT",
     "XRK",
     "FIT",
+    "ACTI",
 )
+
+#: Convertible input extensions for CLI batch (AUTO) mode. Anything else
+#: (video, configs, images, ...) is skipped without attempting conversion. `.ld`/`.ldx` are outputs (ACTI
+#: `.ld` is only claimed by an explicit ACTI batch, never AUTO) and `.dbc`
+#: is a sidecar, so none of them appear here.
+SUPPORTED_INPUT_EXTENSIONS = frozenset({
+    ".rcz",
+    ".csv",
+    ".vbo",
+    ".dlap",
+    ".ibt",
+    ".xrk",
+    ".xrz",
+    ".fit",
+    ".log",
+    ".can",
+    ".trc",
+    ".asc",
+})
+
+#: Extensions the converter writes that are never inputs themselves.
+OUTPUT_EXTENSIONS = frozenset({".ld", ".ldx"})
+
+#: Sibling sidecar extension (passed via --dbc, never converted directly).
+DBC_EXTENSION = ".dbc"
+
+
+def _sniff_ld_for_acti(file_path: str) -> bool:
+    """Header-only probe: Car Coord X/Y present without GPS Latitude means ACTI."""
+    try:
+        from .._vendor.ldparser import ldChan, ldHead
+
+        with open(file_path, "rb") as handle:
+            head = ldHead.fromfile(handle)
+            names = set()
+            meta_ptr = head.meta_ptr
+            while meta_ptr:
+                chan = ldChan.fromfile(file_path, meta_ptr)
+                names.add(chan.name)
+                meta_ptr = chan.next_meta_ptr
+                if len(names) > 400:
+                    break
+    except Exception:
+        return False
+    # Converter outputs carry GPS but never raw Car Coord channels.
+    return "Car Coord X" in names and "Car Coord Y" in names and "GPS Latitude" not in names
 
 
 def auto_detect_log_type(file_path: str) -> str:
@@ -41,6 +88,8 @@ def auto_detect_log_type(file_path: str) -> str:
         return "FIT"
     if path_lower.endswith(".dlap"):
         return "DLAP"
+    if path_lower.endswith(".ld") and _sniff_ld_for_acti(file_path):
+        return "ACTI"
     try:
         with open(file_path, encoding="utf-8", errors="ignore") as f:
             sample = f.read(2048)

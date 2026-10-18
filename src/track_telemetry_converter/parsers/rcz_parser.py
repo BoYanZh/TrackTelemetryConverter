@@ -5,6 +5,7 @@ Extracted from the original DataLog.rcz_log methods with identical behavior."""
 from __future__ import annotations
 
 import datetime
+import logging
 
 import numpy as np
 
@@ -12,12 +13,26 @@ from ..channels import (
     CH_CG_ACCEL_LAT,
     CH_CG_ACCEL_LON,
     CH_CG_ACCEL_VERT,
+    CH_COOLANT_TEMP,
+    CH_ENGINE_OIL_TEMP,
+    CH_G_COMBINED,
     CH_GPS_ALTITUDE,
+    CH_GPS_AUX_A,
+    CH_GPS_AUX_B,
+    CH_GPS_AUX_C,
+    CH_GPS_AUX_D,
+    CH_GPS_AUX_E,
+    CH_GPS_AUX_F,
     CH_GPS_HEADING,
     CH_GPS_LATITUDE,
     CH_GPS_LONGITUDE,
     CH_GROUND_SPEED,
     CH_LAP_NUMBER,
+    CH_MAG_X,
+    CH_MAG_Y,
+    CH_MAG_Z,
+    CH_PITCH_RATE,
+    CH_ROLL_RATE,
     CH_RUNNING_TIME,
     CH_YAW_RATE,
     RCZ_PID_MAP,
@@ -131,6 +146,109 @@ def _load_rcz_session(z, all_names, session_prefix):
 
 
 
+def _load_rcz_fragment(z, all_names, prefix):
+    """Load the stint's sessionfragment.json; None when absent/unreadable."""
+    import json
+    key = prefix + "sessionfragment.json"
+    if key not in all_names:
+        return None
+    try:
+        return json.loads(z.read(key).decode("utf-8"))
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _fragment_device_id(value):
+    """Normalize a fragment device index to the channel-name component."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        text = str(value).strip()
+        return text or None
+
+
+def _parse_rcz_fragment_decl(fragment):
+    """Extract device declarations from sessionfragment.json.
+
+    Returns {"gps": ..., "accel": ..., "gyro": ..., "gyro_bias": ...,
+    "videos_count": ...} with None for anything undeclared. The gyro bias
+    is recorded for consumers, not applied: the parser stays a faithful
+    reader (cf. docs/research/rcz-device-model.md).
+    """
+    decl = {"gps": None, "accel": None, "gyro": None,
+            "gyro_bias": None, "videos_count": None}
+    if not isinstance(fragment, dict):
+        return decl
+    decl["gps"] = _fragment_device_id(
+        fragment.get("primaryGpsDeviceIndex",
+                     fragment.get("primaryGpsDevice")),
+    )
+    decl["accel"] = _fragment_device_id(
+        fragment.get("imuAccDevice", fragment.get("imuAccDeviceIndex")),
+    )
+    decl["gyro"] = _fragment_device_id(
+        fragment.get("imuGyroDevice", fragment.get("imuGyroDeviceIndex")),
+    )
+    gyro = decl["gyro"]
+    bias = None
+    devices2 = fragment.get("devices2")
+    if isinstance(devices2, dict) and gyro is not None:
+        entry = devices2.get(gyro)
+        if not isinstance(entry, dict):
+            try:
+                entry = devices2.get(int(gyro))
+            except (TypeError, ValueError):
+                entry = None
+        if isinstance(entry, dict) and isinstance(entry.get("gyroBias"), list):
+            bias = list(entry["gyroBias"])
+    if bias is None and gyro is not None:
+        devices = fragment.get("devices")
+        items = devices.get("items") if isinstance(devices, dict) else devices
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_id = _fragment_device_id(
+                    item.get("index", item.get("id", item.get("deviceIndex"))),
+                )
+                if item_id == gyro and isinstance(item.get("gyroBias"), list):
+                    bias = list(item["gyroBias"])
+                    break
+    if bias is not None:
+        try:
+            decl["gyro_bias"] = [float(v) for v in bias]
+        except (TypeError, ValueError):
+            decl["gyro_bias"] = None
+    videos = fragment.get("videos")
+    if isinstance(videos, list):
+        decl["videos_count"] = len(videos)
+    return decl
+
+
+def _apply_rcz_fragment_meta(data_log, decl):
+    """Record fragment declarations in metadata (no channel changes)."""
+    roles = {k: decl[k] for k in ("gps", "accel", "gyro") if decl.get(k) is not None}
+    if roles:
+        data_log.metadata["rcz_device_roles"] = roles
+    if decl.get("gyro_bias") is not None:
+        data_log.metadata["rcz_gyro_bias_declared"] = decl["gyro_bias"]
+    if decl.get("videos_count") is not None:
+        data_log.metadata["rcz_videos_count"] = decl["videos_count"]
+        logging.getLogger(__name__).debug(
+            "RCZ fragment declares %d video(s); counted in metadata only",
+            decl["videos_count"],
+        )
+
+
+def _declared_first(order, declared):
+    """Move the fragment-declared id to the head, keeping fallback order."""
+    if declared in order:
+        return (declared,) + tuple(x for x in order if x != declared)
+    return tuple(order)
+
+
 def _load_rcz_traps(data_log, z, all_names, session_prefix, session_json):
     """Load track trap markers into data_log.traps."""
     import json
@@ -167,12 +285,36 @@ def _load_rcz_traps(data_log, z, all_names, session_prefix, session_json):
         traps_list = []
     for trap in traps_list:
         if "centerLatitude" in trap and "centerLongitude" in trap:
-            data_log.traps.append({
+            entry = {
                 "name": trap.get("name", "Split"),
                 "lat": trap["centerLatitude"] / 6000000.0,
                 "lon": trap["centerLongitude"] / 6000000.0,
                 "type": trap.get("type", 4),
-            })
+            }
+            # Full trap fields: bearing/width are stored x1000 in the
+            # archive (180000 -> 180.0 deg; width scale mm -> m is assumed
+            # and unverified). Anything else stays in the trap dict only --
+            # never widened into channels. Unknown future keys go to
+            # debug log, not to silent loss.
+            if trap.get("bearing") is not None:
+                entry["bearing_deg"] = trap["bearing"] / 1000.0
+            if trap.get("width") is not None:
+                entry["width_m"] = trap["width"] / 1000.0
+            if trap.get("orderValue") is not None:
+                entry["order"] = trap["orderValue"]
+            if trap.get("uniDirectional") is not None:
+                entry["uni_directional"] = bool(trap["uniDirectional"])
+            known_trap_keys = {
+                "name", "centerLatitude", "centerLongitude", "bearing",
+                "width", "type", "orderValue", "uniDirectional",
+            }
+            unknown = sorted(set(trap) - known_trap_keys)
+            if unknown:
+                logging.getLogger(__name__).debug(
+                    "RCZ trap %r carries unmapped keys: %s",
+                    trap.get("name", "Split"), unknown,
+                )
+            data_log.traps.append(entry)
 
 def _apply_rcz_session_meta(data_log, session_json, rcz_file_path):
     """Apply session datetime and metadata fields."""
@@ -215,28 +357,28 @@ def _select_rcz_stint(target_stint):
 
 
 
-def _resolve_rcz_clock(read_channel, namelist, epoch_reference):
-    """Resolve the GPS timestamp channel; return (time_file, timestamps_ms)."""
-    time_file = None
-    timestamps_ms = None
-    for candidate in _GPS_TS_KEYS:
+def _resolve_rcz_clock(read_channel, namelist, epoch_reference, declared_gps=None):
+    """Resolve the GPS timestamp channel; return (time_file, timestamps_ms).
+
+    A fragment-declared GPS device is tried first; the legacy
+    (300, 200, 100) order stays as fallback so packs without a fragment --
+    and packs whose declared family is absent -- parse exactly as before.
+    """
+    ordered = _declared_first(("300", "200", "100"), declared_gps)
+    for device_type in ordered:
+        candidate = f"channel_1_{device_type}_0_1_1"
         if candidate in namelist:
             decoded = _decode_epoch_ms(read_channel(candidate), epoch_reference)
             if decoded is not None:
-                time_file = candidate
-                timestamps_ms = decoded
-                break
+                return candidate, decoded
 
-    if not time_file:
-        for name in namelist:
-            if name.startswith("channel_") and name.endswith("_1_1"):
-                decoded = _decode_epoch_ms(read_channel(name), epoch_reference)
-                if decoded is not None:
-                    time_file = name
-                    timestamps_ms = decoded
-                    break
+    for name in namelist:
+        if name.startswith("channel_") and name.endswith("_1_1"):
+            decoded = _decode_epoch_ms(read_channel(name), epoch_reference)
+            if decoded is not None:
+                return name, decoded
 
-    return time_file, timestamps_ms
+    return None, None
 
 def _init_rcz_timebase(data_log, timestamps_ms):
     """Set the absolute origin; return (times_sec, n_samples, time_origin_epoch_ms)."""
@@ -249,10 +391,17 @@ def _init_rcz_timebase(data_log, timestamps_ms):
 
 
 
-def _resolve_rcz_gps(data_log, read_channel, namelist, n_samples):
-    """Identify the GPS sensor family and read speed values."""
+def _resolve_rcz_gps(data_log, read_channel, namelist, n_samples, declared_gps=None):
+    """Identify the GPS sensor family and read speed values.
+
+    The fragment-declared GPS family is preferred; the legacy
+    (300, 200, 100) priority stays as fallback so single-family packs
+    resolve identically with or without a fragment.
+    """
     gps_prefix = None
-    for candidate_prefix in _GPS_DEV_PFX:
+    ordered_types = _declared_first(("300", "200", "100"), declared_gps)
+    for device_type in ordered_types:
+        candidate_prefix = f"channel_1_{device_type}_0_"
         if any(name.startswith(candidate_prefix) for name in namelist):
             gps_prefix = candidate_prefix
             break
@@ -292,9 +441,13 @@ def _reconstruct_rcz_laps(session_json, active_stint, times_sec, timestamps_ms, 
     stint_start_ms = timestamps_ms[0] if len(timestamps_ms) else first_t
     stint_end_ms = timestamps_ms[-1] if len(timestamps_ms) else (first_t + int(stint_duration_s * 1000))
 
-    # Filter raw laps that actually overlap with binary recording range
+    # Filter raw laps that actually overlap with binary recording range.
+    # Laps flagged isInvalid never seed reconstruction (all 305 corpus
+    # laps are False, so this is a zero-impact guard with a test).
     overlapping_laps = []
     for lap in stint_laps:
+        if lap.get("isInvalid"):
+            continue
         s_ms = lap.get("startTimestamp")
         f_ms = lap.get("finishTimestamp")
         if not s_ms:
@@ -496,8 +649,127 @@ def _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_sample
             if len(raw_hdg) >= n_samples:
                 populate_channel(CH_GPS_HEADING, "deg", raw_hdg / 1000.0)
 
-def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel):
-    """Populate accelerometer/gyro channels with drift correction."""
+def _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channel, populate_channel):
+    """Collect GPS-family value files of uncertain semantics (30002/30003/30007/46/30004/30005).
+
+    All ride the GPS clock 1:1 (4 bytes/sample). Names stay neutral
+    (GPS Aux A-F) because no paired RCZ+CSV cross-check survives in the
+    corpus; the likely mapping (app tables + value ranges: A=satellites,
+    B=fix type, C=accuracy in m, D=device battery in %, E/F=coordinate /
+    altitude precision in m) is recorded here, not asserted. Absent or
+    short files are skipped, so older packs are unaffected.
+    """
+    if not gps_prefix:
+        return
+
+    def _read_i4(key):
+        if key not in namelist:
+            return None
+        values = np.frombuffer(read_channel(key), dtype="<i4")
+        if len(values) < n_samples:
+            return None
+        return values[:n_samples].astype(np.float64)
+
+    # A (30002): modern packs store raw counts (11 ~ 16); the 2026-02-19
+    # pack stores count x 1000 (3000 ~ 16000). Counts above 100 cannot be
+    # raw satellites, so divide. Either way the uncertain name stands.
+    aux_a = _read_i4(gps_prefix + "30002_0")
+    if aux_a is not None:
+        if np.nanmax(aux_a) > 100:
+            aux_a = aux_a / 1000.0
+        populate_channel(CH_GPS_AUX_A, "", aux_a, 0)
+
+    aux_b = _read_i4(gps_prefix + "30003_0")
+    if aux_b is not None:
+        populate_channel(CH_GPS_AUX_B, "", aux_b, 0)
+
+    aux_c = _read_i4(gps_prefix + "30007_0")
+    if aux_c is not None:
+        populate_channel(CH_GPS_AUX_C, "m", aux_c / 1000.0)
+
+    aux_d = _read_i4(gps_prefix + "46_0")
+    if aux_d is not None:
+        populate_channel(CH_GPS_AUX_D, "%", aux_d / 1000.0, 1)
+
+    # E/F (30004/30005): INT32_MAX marks unknown precision -- keep it
+    # missing (NaN), not a 2-million-metre error.
+    for key, out_name in (("30004_0", CH_GPS_AUX_E), ("30005_0", CH_GPS_AUX_F)):
+        aux = _read_i4(gps_prefix + key)
+        if aux is None:
+            continue
+        aux = np.where(aux >= 2147483647, np.nan, aux) / 1000.0
+        populate_channel(out_name, "m", aux)
+
+def _populate_rcz_magnetometer(data_log, namelist, times_sec, n_samples, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel):
+    """Archive device-8 magnetometer files (28/29/30) as raw channels.
+
+    GPS-Aux套路: value semantics are UNCERTAIN (app-table names X/Y/Z
+    magnetic field + int32 ranges only, no paired cross-check), so raw
+    counts are stored x1.0 under neutral Magnetic Field names. A valid
+    paired `channel_8_<type>_0_1_1` epoch stream is required (observed
+    valid in the 2026-03-07 pack); values resample onto the GPS grid via
+    their own clock, falling back to 1:1 truncation. The `*_2_1` uptime
+    companion is validation-only (see _validate_uptime_clocks) and never
+    stored -- an all-zero degraded stream changes nothing here.
+    """
+    import os
+    import re
+    _mag_re = re.compile(r"^channel_8_(\d+)_0_(28|29|30)_0$")
+    families = sorted({
+        _mag_re.match(os.path.basename(name)).group(1)
+        for name in namelist
+        if _mag_re.match(os.path.basename(name))
+    })
+    if not families:
+        return
+    if len(families) > 1:
+        logging.getLogger(__name__).debug(
+            "RCZ stint carries %d magnetometer families %s; keeping primary only",
+            len(families), families,
+        )
+    mag_type = families[0]
+    ts_candidates = [
+        n for n in namelist
+        if os.path.basename(n) == f"channel_8_{mag_type}_0_1_1"
+    ]
+    if not ts_candidates:
+        return
+    mag_t = None
+    for ts_key in ts_candidates:
+        raw_ts = _decode_epoch_ms(read_channel(ts_key), time_origin_epoch_ms)
+        if raw_ts is not None:
+            mag_t = _relative_epoch_seconds(raw_ts, time_origin_epoch_ms)
+            break
+    if mag_t is None:
+        return
+    for suffix, out_name in (
+        ("28_0", CH_MAG_X), ("29_0", CH_MAG_Y), ("30_0", CH_MAG_Z),
+    ):
+        val_candidates = [
+            n for n in namelist
+            if os.path.basename(n) == f"channel_8_{mag_type}_0_{suffix}"
+        ]
+        if not val_candidates:
+            continue
+        raw = np.frombuffer(
+            read_channel(val_candidates[0]), dtype="<i4",
+        ).astype(np.float64)
+        if len(raw) == len(mag_t):
+            resampled = np.interp(times_sec, mag_t, raw)
+            if mask_interp_gaps:
+                resampled = _mask_interp_gaps(resampled, times_sec, mag_t)
+            resampled = _mask_interp_outside_range(resampled, times_sec, mag_t)
+            populate_channel(out_name, "", resampled, 0)
+        elif len(raw) >= n_samples:
+            populate_channel(out_name, "", raw, 0)
+
+def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel, declared_accel=None, declared_gyro=None):
+    """Populate accelerometer/gyro channels with drift correction.
+
+    Fragment-declared IMU devices are preferred; the legacy box-first
+    order stays as fallback so single-set packs resolve identically with
+    or without a fragment.
+    """
     # 6. Parse Accelerations (device 2, type 201)
     # If a per-device timestamp file exists, resample onto GPS time grid using
     # np.interp.  This corrects for slight rate drift (e.g. IMU at 25.008 Hz vs
@@ -533,7 +805,14 @@ def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoc
     accel_type = next(
         (
             device_type
-            for device_type in ("301", "201", "101")
+            # 301/302 = external box, 201/202 = newer phone, 101/102 =
+            # older phone, 100/101 = 2026-03-07 phone scheme (accel rides
+            # as 2_100, gyro as 3_101 alongside the 300-series box).
+            # Box first: order is priority, append-only to keep older
+            # packs byte-identical. A fragment declaration moves to the
+            # head without changing the fallback order.
+            for device_type in _declared_first(
+                ("301", "201", "101", "100"), declared_accel)
             if f"channel_2_{device_type}_0_10_0" in namelist
         ),
         None,
@@ -572,12 +851,14 @@ def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoc
     # 7. Parse Gyroscope / Yaw Rate (device 3, type 302 / 202 / 102)
     gyro_z_file = None
     gyro_ts_file = None
-    for g_type in ("302", "202", "102"):
+    primary_gyro_type = None
+    for g_type in _declared_first(("302", "202", "102", "101"), declared_gyro):
         gz_cand = f"channel_3_{g_type}_0_14_0"
         ts_cand = f"channel_3_{g_type}_0_1_1"
         if gz_cand in namelist:
             gyro_z_file = gz_cand
             gyro_ts_file = ts_cand
+            primary_gyro_type = g_type
             break
 
     if gyro_z_file:
@@ -587,6 +868,186 @@ def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoc
                            -1.0 / 1000.0, ts_key=gyro_ts_file)
         data_log.metadata["yaw_rate_source"] = f"rcz_gyro_3_{g_type}"
         data_log.metadata["yaw_axis_sign_verified"] = True
+        # Gyroscope X/Y ride the same device clock (12 = X/roll,
+        # 13 = Y/pitch per the RaceChrono rotation-rate table). Same
+        # sensor-frame scale as Z; X/Y sign is unverified (no CAN
+        # reference) and left as-recorded. Missing files are skipped
+        # inside _parse_imu_channel, so older packs are unaffected.
+        gyro_prefix = f"channel_3_{g_type}_0_"
+        _parse_imu_channel(gyro_prefix + "12_0", CH_ROLL_RATE, "deg/s",
+                           -1.0 / 1000.0, ts_key=gyro_ts_file)
+        _parse_imu_channel(gyro_prefix + "13_0", CH_PITCH_RATE, "deg/s",
+                           -1.0 / 1000.0, ts_key=gyro_ts_file)
+
+    _populate_rcz_secondary_imu(
+        data_log, namelist, times_sec, time_origin_epoch_ms,
+        mask_interp_gaps, read_channel, populate_channel,
+        primary_accel_type=accel_type, primary_gyro_type=primary_gyro_type,
+    )
+
+
+def _populate_rcz_secondary_imu(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel, primary_accel_type, primary_gyro_type):
+    """Parse a second IMU set (if present) into *-suffixed channels.
+
+    Dual-device packs (e.g. 2026-03-07: phone IMU 2_100/3_101 riding
+    alongside the primary 300-series box) carry a full extra
+    accelerometer/gyro set. The primary selection above is untouched, so
+    single-set packs -- the common case -- produce byte-identical output;
+    the extra set only surfaces here under Secondary names, with existing
+    channel values unchanged. Secondary gyro sign follows the primary
+    convention but is unverified (no CAN reference for the second device).
+    """
+
+    def _imu_times(ts_key):
+        if ts_key not in namelist:
+            return None
+        raw = _decode_epoch_ms(read_channel(ts_key), time_origin_epoch_ms)
+        if raw is None:
+            return None
+        return _relative_epoch_seconds(raw, time_origin_epoch_ms)
+
+    def _parse_secondary(ch_key, out_name, units, scale, ts_key=None):
+        if ch_key in namelist and out_name not in data_log.channels:
+            raw = np.frombuffer(read_channel(ch_key), dtype="<i4").astype(np.float64) * scale
+            imu_t = _imu_times(ts_key) if ts_key else None
+            if imu_t is not None and len(imu_t) == len(raw):
+                resampled = np.interp(times_sec, imu_t, raw)
+                if mask_interp_gaps:
+                    resampled = _mask_interp_gaps(resampled, times_sec, imu_t)
+                resampled = _mask_interp_outside_range(resampled, times_sec, imu_t)
+            else:
+                resampled = raw
+            # populate_channel truncates to the GPS grid when long enough;
+            # a shorter secondary set is skipped, never zero-filled.
+            populate_channel(out_name, units, resampled)
+
+    secondary_accel = next(
+        (
+            device_type
+            for device_type in ("301", "201", "101", "100")
+            if device_type != primary_accel_type
+            and f"channel_2_{device_type}_0_10_0" in namelist
+        ),
+        None,
+    )
+    secondary_gyro = next(
+        (
+            device_type
+            for device_type in ("302", "202", "102", "101")
+            if device_type != primary_gyro_type
+            and f"channel_3_{device_type}_0_14_0" in namelist
+        ),
+        None,
+    )
+    if secondary_accel is None and secondary_gyro is None:
+        # Also note a second GPS family sharing one stint (not observed in
+        # the corpus -- multi-GPS packs switch families per stint instead).
+        gps_families = {
+            name.split("_")[2]
+            for name in namelist
+            if name.startswith("channel_1_") and name.endswith("_1_1")
+        }
+        if len(gps_families) > 1:
+            logging.getLogger(__name__).debug(
+                "RCZ stint carries %d GPS families %s; keeping primary only",
+                len(gps_families), sorted(gps_families),
+            )
+        return
+    if secondary_accel is not None:
+        prefix = f"channel_2_{secondary_accel}_0_"
+        ts_key = prefix + "1_1"
+        _parse_secondary(prefix + "10_0", CH_CG_ACCEL_LAT + " Secondary", "G", 1.0 / 10000.0, ts_key=ts_key)
+        _parse_secondary(prefix + "9_0", CH_CG_ACCEL_LON + " Secondary", "G", 1.0 / 10000.0, ts_key=ts_key)
+        _parse_secondary(prefix + "11_0", CH_CG_ACCEL_VERT + " Secondary", "G", 1.0 / 10000.0, ts_key=ts_key)
+    if secondary_gyro is not None:
+        prefix = f"channel_3_{secondary_gyro}_0_"
+        ts_key = prefix + "1_1"
+        _parse_secondary(prefix + "14_0", CH_YAW_RATE + " Secondary", "deg/s", -1.0 / 1000.0, ts_key=ts_key)
+        _parse_secondary(prefix + "12_0", CH_ROLL_RATE + " Secondary", "deg/s", -1.0 / 1000.0, ts_key=ts_key)
+        _parse_secondary(prefix + "13_0", CH_PITCH_RATE + " Secondary", "deg/s", -1.0 / 1000.0, ts_key=ts_key)
+    data_log.metadata["secondary_imu_source"] = (
+        f"rcz_secondary_2_{secondary_accel}/3_{secondary_gyro}"
+    )
+
+
+def _check_uptime_stream(raw_bytes, clock_len):
+    """Structural check on one device `*_2_1` uptime stream.
+
+    Encoding (int32 pairs, odd words zero) is not a wall clock -- its tick
+    rate varies by device -- so no timestamps are derived from it. What is
+    checked: pair structure, monotonic non-decreasing ticks, and 1:1 count
+    accompaniment with the sibling `*_1_1` epoch stream. Returns a small
+    summary dict for metadata; violations are for the caller to warn on.
+    """
+    summary = {
+        "samples": 0, "monotonic": False, "clock_match": False,
+        "median_ticks_per_sample": None,
+    }
+    if len(raw_bytes) < 8 or len(raw_bytes) % 8:
+        return summary
+    words = np.frombuffer(raw_bytes, dtype="<i4")
+    if len(words) % 2:
+        return summary
+    ticks = words[0::2].astype(np.float64)
+    summary["samples"] = len(ticks)
+    summary["monotonic"] = bool(np.all(np.diff(ticks) >= 0))
+    summary["clock_match"] = len(ticks) == clock_len
+    if len(ticks) > 1:
+        summary["median_ticks_per_sample"] = float(np.median(np.diff(ticks)))
+    return summary
+
+
+def _validate_uptime_clocks(data_log, namelist, read_channel):
+    """Cross-clock drift sentinel over each device's `*_2_1` uptime file.
+
+    Deliberately metadata-only (no diagnostic channels): the tick unit is
+    device-specific and unverified, so the check asserts structure, not
+    time. Any violation prints a warning; the per-device summary lands in
+    metadata for post-hoc inspection.
+    """
+    import os
+    import re
+    # Device-family uptime shape only: channel_<dev>_<type>_0_2_1.
+    # channel_12_<sub>_<pid>_2_1 files are per-PID OBD timestamp streams,
+    # not uptime -- matching them warns falsely on every CAN pack (624
+    # such files in the corpus), so device 12 is excluded explicitly.
+    _uptime_re = re.compile(r"^channel_(?!12_)\d+_\d+_0_2_1$")
+    report = {}
+    for name in sorted(namelist):
+        base = os.path.basename(name)
+        if not _uptime_re.match(base):
+            continue
+        head, _, _ = base.rpartition("_2_1")
+        clock_key = next(
+            (n for n in namelist if os.path.basename(n) == head + "_1_1"),
+            None,
+        )
+        clock_len = -1
+        if clock_key is not None:
+            try:
+                clock_len = len(np.frombuffer(read_channel(clock_key), dtype="<i8"))
+            except (ValueError, TypeError):
+                clock_len = -1
+        try:
+            summary = _check_uptime_stream(read_channel(name), clock_len)
+        except (ValueError, TypeError):
+            summary = {"samples": 0, "monotonic": False, "clock_match": False,
+                       "median_ticks_per_sample": None}
+        report[name] = summary
+        if not summary["monotonic"] or not summary["clock_match"]:
+            print(
+                f"WARNING: RCZ uptime stream {name} looks corrupt "
+                f"(monotonic={summary['monotonic']}, "
+                f"clock_match={summary['clock_match']})",
+            )
+        else:
+            logging.getLogger(__name__).debug(
+                "RCZ uptime %s: %d samples, median %.1f ticks/sample",
+                name, summary["samples"],
+                summary["median_ticks_per_sample"] or 0.0,
+            )
+    if report:
+        data_log.metadata["rcz_uptime_clocks"] = report
 
 def _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel):
     """Populate primary OBD (device 12) CAN channels."""
@@ -597,6 +1058,10 @@ def _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mas
     # Internal RCZ channel PID to MoTeC channel name & unit mapping:
     rcz_pid_map = RCZ_PID_MAP
     yaw_rate_from_can = False
+    # PID 43 timestamp files without a value companion (common: 18 corpus
+    # packs) are collected below and emitted after the loop as an all-NaN
+    # placeholder -- only if no real G Force Combined arrived meanwhile.
+    pid43_degraded_times = None
 
     for name in sorted(namelist):
         base_fname = os.path.basename(name)
@@ -612,6 +1077,18 @@ def _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mas
         companion_fname = f"channel2_12_{dev_sub}_{pid}_{pid}_3"
         companion = (dir_prefix + "/" + companion_fname) if dir_prefix else companion_fname
         if companion not in namelist or raw_times is None:
+            # Degraded branch: the sensor declared timestamps but stored no
+            # values. Emit NaN (masked, not zero) so the gap is visible and
+            # calculate_g_sum can still recompute the channel at math time.
+            # Normal path below is untouched.
+            if (
+                pid == "43"
+                and companion not in namelist
+                and raw_times is not None
+                and CH_G_COMBINED not in data_log.channels
+                and pid43_degraded_times is None
+            ):
+                pid43_degraded_times = raw_times
             continue
         # Correct binary format: float64 (double precision, 8 bytes per value)
         value_data = np.frombuffer(read_channel(companion), dtype="<f8")
@@ -650,20 +1127,41 @@ def _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mas
         else:
             populate_channel(f"OBD_{pid}", "", values)
 
+    if pid43_degraded_times is not None and CH_G_COMBINED not in data_log.channels:
+        # Timestamp-only PID 43: no samples to interpolate, so mask the
+        # whole GPS grid as missing rather than synthesising zeros.
+        populate_channel(
+            CH_G_COMBINED, "G", np.full(len(times_sec), np.nan),
+        )
+        data_log.metadata["g_combined_source"] = "rcz_pid43_timestamps_only"
+
 def _populate_rcz_obd4(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel):
     """Populate secondary OBD (device 4/101, phone IMU flavored PIDs)."""
     import os
     # 8b. Parse OBD-II / CAN Channels - Device 4, Type 101 (shared timestamp format)
-    # Format: channel_4_101_0_1_1 = shared i32[::2] uptime timestamps for all PIDs
+    # Format: channel_4_101_0_1_1 = shared int64 epoch-ms timestamps for all PIDs
     #         channel2_4_101_0_{pid}_3 = per-PID float64 values (same length as timestamps)
     # Device 4/type 101 uses phone-IMU channels for PIDs 7/8/49/50 - different from
     # the GR86-ECU meaning of the same PIDs on device 12/type 100.
     _g = 9.80665
+    _f_to_c = 5.0 / 9.0
+    _f_to_c_offset = -32.0 * _f_to_c
     rcz_dev4_pid_overrides = {
         # PID 7 on device 4 = phone lateral accelerometer (m/s^2), NOT ECU Roll Angle
         "7":  (CH_CG_ACCEL_LAT,     "G",    1.0 / _g, 0.0),
         # PID 8 on device 4 = phone vertical accelerometer (m/s^2, includes gravity) - skip
         "8":  None,
+        # PIDs 49/50 on device 4 = phone roll/pitch rate (rotation-rate
+        # class, same as pid 51/14): +/-30 / +/-19 deg/s in the 2026-02-19
+        # pack matches gyro ranges, so deg/s x1.0 like device-12 pid 51.
+        "49": (CH_ROLL_RATE,        "deg/s", 1.0, 0.0),
+        "50": (CH_PITCH_RATE,       "deg/s", 1.0, 0.0),
+        # Device-4 coolant/oil temps are Fahrenheit, not Celsius: the
+        # 2026-02-19 pack reads 154 ~ 201 (10026) and 144 ~ 246 (10066),
+        # i.e. exactly the device-12 Celsius ranges (67 ~ 95 C, 57 ~ 119 C)
+        # through x9/5+32. Mapping them as C would emit 200 C coolant.
+        "10026": (CH_COOLANT_TEMP,    "C", _f_to_c, _f_to_c_offset),
+        "10066": (CH_ENGINE_OIL_TEMP, "C", _f_to_c, _f_to_c_offset),
     }
     dev4_ts_key = _OBD_DEV4_TS_KEY
     dir_prefix = os.path.dirname(dev4_ts_key)
@@ -680,7 +1178,7 @@ def _populate_rcz_obd4(data_log, namelist, times_sec, time_origin_epoch_ms, mask
             dev4_map = {**RCZ_PID_MAP, **{
                 k: v for k, v in rcz_dev4_pid_overrides.items() if v is not None
             }}
-            for pid in set(list(RCZ_PID_MAP.keys()) + list(rcz_dev4_pid_overrides.keys())):
+            for pid in sorted(set(list(RCZ_PID_MAP.keys()) + list(rcz_dev4_pid_overrides.keys())), key=str):
                 override = rcz_dev4_pid_overrides.get(pid, "NOT_OVERRIDDEN")
                 if override is None:
                     continue  # explicitly skipped for device 4
@@ -757,8 +1255,15 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
         _apply_rcz_session_meta(data_log, session_json, rcz_file_path)
 
         active_stint = _select_rcz_stint(target_stint)
+        fragment = _load_rcz_fragment(z, all_names, prefix)
+        decl = _parse_rcz_fragment_decl(fragment)
+        if fragment is not None:
+            _apply_rcz_fragment_meta(data_log, decl)
         epoch_reference = session_json.get("firstTimestamp") or session_json.get("timeCreated")
-        time_file, timestamps_ms = _resolve_rcz_clock(read_channel, namelist, epoch_reference)
+        time_file, timestamps_ms = _resolve_rcz_clock(
+            read_channel, namelist, epoch_reference,
+            declared_gps=decl.get("gps"),
+        )
         if not time_file or timestamps_ms is None:
             print("ERROR: Could not find timestamp channel in RCZ file")
             return
@@ -767,7 +1272,10 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
 
         # Resolve the GPS channels before reconstructing laps so a recording
         # that starts at speed can be identified as a partial out lap.
-        gps_prefix, gps_speed_values = _resolve_rcz_gps(data_log, read_channel, namelist, n_samples)
+        gps_prefix, gps_speed_values = _resolve_rcz_gps(
+            data_log, read_channel, namelist, n_samples,
+            declared_gps=decl.get("gps"),
+        )
 
         reconstructed_laps, lap_numbers, stint_duration_s = _reconstruct_rcz_laps(
             session_json, active_stint, times_sec, timestamps_ms, first_t, min_lap_sec, gps_speed_values, n_samples,
@@ -784,12 +1292,18 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
         # Running Time Channel
         populate_channel(CH_RUNNING_TIME, "s", export_times_sec, 2)
         _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_samples, read_channel, populate_channel)
+        _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channel, populate_channel)
 
-        _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel)
+        _populate_rcz_magnetometer(data_log, namelist, times_sec, n_samples, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel)
+
+        _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel,
+                          declared_accel=decl.get("accel"), declared_gyro=decl.get("gyro"))
 
         _populate_rcz_obd12(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel)
 
         _populate_rcz_obd4(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel)
+
+        _validate_uptime_clocks(data_log, namelist, read_channel)
 
     # Fallback for Chassis Yaw Rate if missing
     derive_yaw_rate_from_gps_heading(data_log)

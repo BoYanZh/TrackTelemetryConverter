@@ -693,3 +693,727 @@ def test_rcz_stint_zero_does_not_read_resume_can_channels(tmp_path):
     resumed.from_rcz_log(str(path), target_stint=1)
     np.testing.assert_allclose(resumed.channels["Chassis Yaw Rate"].values, 10)
     assert resumed.metadata["yaw_rate_source"] == "rcz_can_12_200_pid_51"
+
+
+def test_rcz_gyro_xy_parsed_alongside_yaw(tmp_path):
+    """Device-3 gyro X/Y (_12/_13) parse as roll/pitch rate; absence is a skip."""
+    first = 1_700_000_000_000
+    ts = (first + np.arange(8, dtype="<i8") * 40).astype("<i8")
+    path = tmp_path / "gyro-xyz.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_100_0_1_1", ts.tobytes())
+        z.writestr("channel_1_100_0_4_0",
+                   np.full(len(ts), 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_3_102_0_1_1", ts.tobytes())
+        z.writestr("channel_3_102_0_12_0",
+                   np.full(len(ts), 4000, dtype="<i4").tobytes())
+        z.writestr("channel_3_102_0_13_0",
+                   np.full(len(ts), -6000, dtype="<i4").tobytes())
+        z.writestr("channel_3_102_0_14_0",
+                   np.full(len(ts), -12000, dtype="<i4").tobytes())
+
+    log = DataLog()
+    log.from_rcz_log(str(path), mask_interp_gaps=True)
+    np.testing.assert_allclose(log.channels["Chassis Roll Rate"].values, -4.0)
+    np.testing.assert_allclose(log.channels["Chassis Pitch Rate"].values, 6.0)
+    np.testing.assert_allclose(log.channels["Chassis Yaw Rate"].values, 12.0)
+    assert log.channels["Chassis Roll Rate"].units == "deg/s"
+    assert log.channels["Chassis Pitch Rate"].units == "deg/s"
+
+    # Legacy pack with Z only: no roll/pitch channels, yaw unchanged.
+    legacy = tmp_path / "gyro-z-only.rcz"
+    with zipfile.ZipFile(legacy, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_100_0_1_1", ts.tobytes())
+        z.writestr("channel_1_100_0_4_0",
+                   np.full(len(ts), 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_3_102_0_1_1", ts.tobytes())
+        z.writestr("channel_3_102_0_14_0",
+                   np.full(len(ts), -12000, dtype="<i4").tobytes())
+
+    old = DataLog()
+    old.from_rcz_log(str(legacy), mask_interp_gaps=True)
+    assert "Chassis Roll Rate" not in old.channels
+    assert "Chassis Pitch Rate" not in old.channels
+    np.testing.assert_allclose(old.channels["Chassis Yaw Rate"].values, 12.0)
+
+
+def _write_gps_aux_rcz(path, first, sats_raw, fix_raw=None, accuracy_mm=None,
+                       battery_mpc=None, coord_prec_mm=None, alt_prec_mm=None,
+                       gps_type="300"):
+    """Write an RCZ whose GPS family carries the uncertain Aux value files."""
+    import zipfile
+
+    n = 5
+    ts = (first + np.arange(n, dtype="<i8") * 40).astype("<i8")
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr(f"channel_1_{gps_type}_0_1_1", ts.tobytes())
+        z.writestr(f"channel_1_{gps_type}_0_4_0",
+                   np.full(n, 20_000, dtype="<i4").tobytes())
+        payloads = {
+            "30002_0": sats_raw, "30003_0": fix_raw, "30007_0": accuracy_mm,
+            "46_0": battery_mpc, "30004_0": coord_prec_mm,
+            "30005_0": alt_prec_mm,
+        }
+        for suffix, values in payloads.items():
+            if values is None:
+                continue
+            z.writestr(f"channel_1_{gps_type}_0_{suffix}",
+                       np.array(values, dtype="<i4").tobytes())
+
+
+def test_rcz_gps_aux_channels_keep_uncertain_names(tmp_path):
+    """GPS Aux A/B/C/D parse 1:1 with the GPS clock under neutral names.
+
+    No paired RCZ+CSV cross-check survives in the corpus, so the likely
+    app-table semantics stay in comments, not in channel names.
+    """
+    first = 1_700_000_000_000
+    path = tmp_path / "gps-aux.rcz"
+    _write_gps_aux_rcz(
+        path, first,
+        sats_raw=[14, 15, 15, 14, 13],
+        fix_raw=[3, 3, 3, 3, 3],
+        accuracy_mm=[1129, 1125, 1122, 1119, 1116],
+        battery_mpc=[84000, 84000, 83000, 83000, 82000],
+    )
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    aux_a = log.channels["GPS Aux A"]
+    assert aux_a.units == ""
+    np.testing.assert_allclose(aux_a.values, [14, 15, 15, 14, 13])
+    np.testing.assert_allclose(
+        log.channels["GPS Aux B"].values, [3, 3, 3, 3, 3],
+    )
+    aux_c = log.channels["GPS Aux C"]
+    assert aux_c.units == "m"
+    np.testing.assert_allclose(aux_c.values, [1.129, 1.125, 1.122, 1.119, 1.116])
+    aux_d = log.channels["GPS Aux D"]
+    assert aux_d.units == "%"
+    np.testing.assert_allclose(aux_d.values, [84.0, 84.0, 83.0, 83.0, 82.0])
+    # E/F absent here: skipped, not zero-filled.
+    assert "GPS Aux E" not in log.channels
+    assert "GPS Aux F" not in log.channels
+    # Existing channels untouched by the new companions.
+    np.testing.assert_allclose(log.channels["Ground Speed"].values, 72.0)
+
+
+def test_rcz_gps_aux_a_decodes_legacy_x1000_counts(tmp_path):
+    """The 2026-02-19 pack stores satellite counts x1000 (3000 ~ 16000)."""
+    first = 1_700_000_000_000
+    path = tmp_path / "gps-aux-legacy.rcz"
+    _write_gps_aux_rcz(
+        path, first, sats_raw=[3000, 12000, 14000, 15000, 16000],
+    )
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    np.testing.assert_allclose(
+        log.channels["GPS Aux A"].values, [3, 12, 14, 15, 16],
+    )
+
+
+def test_rcz_gps_aux_precision_sentinel_stays_missing(tmp_path):
+    """INT32_MAX precision samples are unknown, not two-million-metre errors."""
+    first = 1_700_000_000_000
+    path = tmp_path / "gps-aux-prec.rcz"
+    _write_gps_aux_rcz(
+        path, first,
+        sats_raw=[14, 14, 14, 14, 14],
+        coord_prec_mm=[1100, 2147483647, 900, 2147483647, 1500],
+        alt_prec_mm=[2147483647, 1900, 1900, 1000, 2147483647],
+    )
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    aux_e = log.channels["GPS Aux E"].values
+    assert aux_e[0] == 1.1 and aux_e[2] == 0.9 and aux_e[4] == 1.5
+    assert np.isnan(aux_e[1]) and np.isnan(aux_e[3])
+    aux_f = log.channels["GPS Aux F"].values
+    assert np.isnan(aux_f[0]) and np.isnan(aux_f[4])
+    assert aux_f[1] == 1.9
+
+
+def test_rcz_secondary_imu_uses_suffixed_channels(tmp_path):
+    """A second IMU set lands in Secondary channels; primary values unchanged."""
+    first = 1_700_000_000_000
+    ts = (first + np.arange(8, dtype="<i8") * 40).astype("<i8")
+    path = tmp_path / "dual-imu.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(len(ts), 20_000, dtype="<i4").tobytes())
+        # Primary box IMU (301/302).
+        z.writestr("channel_2_301_0_1_1", ts.tobytes())
+        z.writestr("channel_2_301_0_10_0",
+                   np.full(len(ts), 8500, dtype="<i4").tobytes())
+        z.writestr("channel_2_301_0_9_0",
+                   np.full(len(ts), -3200, dtype="<i4").tobytes())
+        z.writestr("channel_2_301_0_11_0",
+                   np.full(len(ts), 9700, dtype="<i4").tobytes())
+        z.writestr("channel_3_302_0_1_1", ts.tobytes())
+        z.writestr("channel_3_302_0_14_0",
+                   np.full(len(ts), -12000, dtype="<i4").tobytes())
+        # Secondary phone IMU (101/102) at the same epochs.
+        z.writestr("channel_2_101_0_1_1", ts.tobytes())
+        z.writestr("channel_2_101_0_10_0",
+                   np.full(len(ts), 4250, dtype="<i4").tobytes())
+        z.writestr("channel_2_101_0_9_0",
+                   np.full(len(ts), -1600, dtype="<i4").tobytes())
+        z.writestr("channel_2_101_0_11_0",
+                   np.full(len(ts), 4850, dtype="<i4").tobytes())
+        z.writestr("channel_3_102_0_1_1", ts.tobytes())
+        z.writestr("channel_3_102_0_14_0",
+                   np.full(len(ts), -6000, dtype="<i4").tobytes())
+
+    log = DataLog()
+    log.from_rcz_log(str(path), mask_interp_gaps=True)
+
+    # Primary channels keep the box values, not the phone's.
+    np.testing.assert_allclose(log.channels["CG Accel Lateral"].values, 0.85)
+    np.testing.assert_allclose(
+        log.channels["CG Accel Longitudinal"].values, -0.32,
+    )
+    np.testing.assert_allclose(log.channels["Chassis Yaw Rate"].values, 12.0)
+    assert log.metadata["lateral_accel_source"] == "rcz_accelerometer_2_301"
+    assert log.metadata["yaw_rate_source"] == "rcz_gyro_3_302"
+    # The extra set is preserved under Secondary names.
+    np.testing.assert_allclose(
+        log.channels["CG Accel Lateral Secondary"].values, 0.425,
+    )
+    np.testing.assert_allclose(
+        log.channels["CG Accel Longitudinal Secondary"].values, -0.16,
+    )
+    np.testing.assert_allclose(
+        log.channels["CG Accel Vertical Secondary"].values, 0.485,
+    )
+    np.testing.assert_allclose(
+        log.channels["Chassis Yaw Rate Secondary"].values, 6.0,
+    )
+    assert log.metadata["secondary_imu_source"] == "rcz_secondary_2_101/3_102"
+
+    # Single-set packs gain no Secondary channels (byte-identical output).
+    single = tmp_path / "single-imu.rcz"
+    with zipfile.ZipFile(single, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(len(ts), 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_2_301_0_1_1", ts.tobytes())
+        z.writestr("channel_2_301_0_10_0",
+                   np.full(len(ts), 8500, dtype="<i4").tobytes())
+        z.writestr("channel_3_302_0_1_1", ts.tobytes())
+        z.writestr("channel_3_302_0_14_0",
+                   np.full(len(ts), -12000, dtype="<i4").tobytes())
+
+    solo = DataLog()
+    solo.from_rcz_log(str(single), mask_interp_gaps=True)
+    assert not [name for name in solo.channels if "Secondary" in name]
+    assert "secondary_imu_source" not in solo.metadata
+
+
+def test_rcz_uptime_stream_check_reports_structure(tmp_path, capsys):
+    """Uptime files are validated (monotonic, 1:1), never parsed as time."""
+    from track_telemetry_converter.parsers.rcz_parser import (
+        _check_uptime_stream,
+    )
+
+    good_ticks = np.array([0, 25, 50, 75, 100], dtype="<i4")
+    good = np.column_stack(
+        (good_ticks, np.zeros(5, dtype="<i4")),
+    ).astype("<i4").tobytes()
+    summary = _check_uptime_stream(good, 5)
+    assert summary == {
+        "samples": 5, "monotonic": True, "clock_match": True,
+        "median_ticks_per_sample": 25.0,
+    }
+
+    bad_ticks = np.array([0, 25, 10, 75], dtype="<i4")
+    bad = np.column_stack(
+        (bad_ticks, np.zeros(4, dtype="<i4")),
+    ).astype("<i4").tobytes()
+    assert _check_uptime_stream(bad, 4)["monotonic"] is False
+    assert _check_uptime_stream(good, 99)["clock_match"] is False
+    assert _check_uptime_stream(b"\x00\x01", 0)["samples"] == 0
+
+    # Parse-level: a corrupt device uptime warns but keeps every channel.
+    first = 1_700_000_000_000
+    ts = (first + np.arange(5, dtype="<i8") * 40).astype("<i8")
+    path = tmp_path / "uptime.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(5, 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_1_300_0_2_1", bad)
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+    assert "corrupt" in capsys.readouterr().out
+    assert log.metadata["rcz_uptime_clocks"]["channel_1_300_0_2_1"]["monotonic"] is False
+    np.testing.assert_allclose(log.channels["Ground Speed"].values, 72.0)
+
+
+def test_rcz_pid43_timestamp_only_emits_nan_placeholder(tmp_path):
+    """PID 43 with timestamps but no values degrades to NaN, not zeros."""
+    first = 1_700_000_000_000
+    ts = (first + np.arange(4, dtype="<i8") * 100).astype("<i8")
+    path = tmp_path / "pid43-degraded.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(4, 10_000, dtype="<i4").tobytes())
+        z.writestr("channel_12_200_43_1_1", ts.tobytes())
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    combined = log.channels["G Force Combined"]
+    assert combined.units == "G"
+    assert np.isnan(combined.values).all()
+    assert log.metadata["g_combined_source"] == "rcz_pid43_timestamps_only"
+
+    # Real companion values on another sub-device still win over the gap.
+    both = tmp_path / "pid43-both.rcz"
+    with zipfile.ZipFile(both, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(4, 10_000, dtype="<i4").tobytes())
+        z.writestr("channel_12_100_43_1_1", ts.tobytes())
+        z.writestr("channel2_12_100_43_43_3",
+                   np.array([4.903325, 9.80665, 14.709975, 19.6133]).tobytes())
+        z.writestr("channel_12_200_43_1_1", ts.tobytes())
+
+    real = DataLog()
+    real.from_rcz_log(str(both))
+    np.testing.assert_allclose(
+        real.channels["G Force Combined"].values, [0.5, 1.0, 1.5, 2.0],
+        atol=1e-9,
+    )
+    assert "g_combined_source" not in real.metadata
+
+
+def test_rcz_dev4_phone_rates_and_fahrenheit_temps(tmp_path):
+    """Device-4 PIDs 49/50 are roll/pitch rate; its temps arrive in Fahrenheit."""
+    first = 1_700_000_000_000
+    ts = (first + np.arange(4, dtype="<i8") * 100).astype("<i8")
+    path = tmp_path / "dev4.rcz"
+    pid_values = {
+        "49": [-19.9, 0.0, 29.6, -0.5],
+        "50": [-18.6, 0.0, 14.6, -0.1],
+        "10026": [154.4, 180.0, 201.2, 192.0],
+        "10066": [143.6, 200.0, 246.2, 207.0],
+    }
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_100_0_1_1", ts.tobytes())
+        z.writestr("channel_1_100_0_4_0",
+                   np.full(4, 10_000, dtype="<i4").tobytes())
+        z.writestr("channel_4_101_0_1_1", ts.tobytes())
+        for pid, values in pid_values.items():
+            z.writestr(f"channel2_4_101_0_{pid}_3",
+                       np.array(values, dtype="<f8").tobytes())
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    roll = log.channels["Chassis Roll Rate"]
+    assert roll.units == "deg/s"
+    np.testing.assert_allclose(roll.values, [-19.9, 0.0, 29.6, -0.5], atol=1e-9)
+    pitch = log.channels["Chassis Pitch Rate"]
+    assert pitch.units == "deg/s"
+    np.testing.assert_allclose(pitch.values, [-18.6, 0.0, 14.6, -0.1], atol=1e-9)
+    # Fahrenheit in, Celsius out: 154.4 F == 68.0 C, not 154 C coolant.
+    coolant = log.channels["Coolant Temp"]
+    assert coolant.units == "C"
+    np.testing.assert_allclose(
+        coolant.values,
+        [(v - 32.0) * 5.0 / 9.0 for v in pid_values["10026"]],
+        atol=1e-9,
+    )
+    assert coolant.values.max() < 100.0
+    oil = log.channels["Engine Oil Temp"]
+    np.testing.assert_allclose(
+        oil.values,
+        [(v - 32.0) * 5.0 / 9.0 for v in pid_values["10066"]],
+        atol=1e-9,
+    )
+
+
+def test_rcz_traps_carry_full_fields_and_debug_unknowns(tmp_path, caplog):
+    """Trap bearing/width/order survive in trap dicts; unknown keys log-debug."""
+    import logging
+
+    first = 1_700_000_000_000
+    ts = (first + np.arange(4, dtype="<i8") * 100).astype("<i8")
+    path = tmp_path / "traps.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("trackId.json", json.dumps({"track": {"traps": [
+            {
+                "name": "Start/Finish",
+                "centerLatitude": 237230835,
+                "centerLongitude": -733987259,
+                "bearing": 180000,
+                "width": 100000,
+                "type": 3,
+                "orderValue": 0,
+                "uniDirectional": True,
+                "futureKey": "not-yet-known",
+            },
+        ]}}))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(4, 10_000, dtype="<i4").tobytes())
+
+    log = DataLog()
+    with caplog.at_level(
+        logging.DEBUG, logger="track_telemetry_converter.parsers.rcz_parser",
+    ):
+        log.from_rcz_log(str(path))
+
+    (trap,) = log.traps
+    assert trap["name"] == "Start/Finish"
+    assert trap["bearing_deg"] == 180.0
+    assert trap["width_m"] == 100.0
+    assert trap["order"] == 0
+    assert trap["uni_directional"] is True
+    assert "futureKey" in caplog.text
+
+
+def test_rcz_secondary_imu_covers_100_101_phone_scheme(tmp_path):
+    """The 2026-03-07 phone scheme (accel 2_100, gyro 3_101) is a valid set.
+
+    Primary stays on the 301/302 box; the phone set lands in Secondary
+    channels. Before the probe lists grew "100"/"101", this exact layout
+    parsed with no Secondary channels at all.
+    """
+    first = 1_700_000_000_000
+    ts = (first + np.arange(8, dtype="<i8") * 40).astype("<i8")
+    path = tmp_path / "dual-imu-100-101.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(len(ts), 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_2_301_0_1_1", ts.tobytes())
+        z.writestr("channel_2_301_0_10_0",
+                   np.full(len(ts), 8500, dtype="<i4").tobytes())
+        z.writestr("channel_3_302_0_1_1", ts.tobytes())
+        z.writestr("channel_3_302_0_14_0",
+                   np.full(len(ts), -12000, dtype="<i4").tobytes())
+        z.writestr("channel_2_100_0_1_1", ts.tobytes())
+        z.writestr("channel_2_100_0_10_0",
+                   np.full(len(ts), 4250, dtype="<i4").tobytes())
+        z.writestr("channel_2_100_0_9_0",
+                   np.full(len(ts), -1600, dtype="<i4").tobytes())
+        z.writestr("channel_3_101_0_1_1", ts.tobytes())
+        z.writestr("channel_3_101_0_14_0",
+                   np.full(len(ts), -6000, dtype="<i4").tobytes())
+        z.writestr("channel_3_101_0_12_0",
+                   np.full(len(ts), 2000, dtype="<i4").tobytes())
+
+    log = DataLog()
+    log.from_rcz_log(str(path), mask_interp_gaps=True)
+
+    np.testing.assert_allclose(log.channels["CG Accel Lateral"].values, 0.85)
+    np.testing.assert_allclose(log.channels["Chassis Yaw Rate"].values, 12.0)
+    np.testing.assert_allclose(
+        log.channels["CG Accel Lateral Secondary"].values, 0.425,
+    )
+    np.testing.assert_allclose(
+        log.channels["CG Accel Longitudinal Secondary"].values, -0.16,
+    )
+    np.testing.assert_allclose(
+        log.channels["Chassis Yaw Rate Secondary"].values, 6.0,
+    )
+    np.testing.assert_allclose(
+        log.channels["Chassis Roll Rate Secondary"].values, -2.0,
+    )
+    assert log.metadata["secondary_imu_source"] == "rcz_secondary_2_100/3_101"
+
+
+def test_rcz_uptime_check_ignores_obd_pid_timestamps(tmp_path, capsys):
+    """channel_12_*_2_1 files are per-PID OBD clocks, not uptime streams."""
+    first = 1_700_000_000_000
+    ts = (first + np.arange(5, dtype="<i8") * 40).astype("<i8")
+    path = tmp_path / "obd-ts.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(5, 20_000, dtype="<i4").tobytes())
+        # Well-formed device uptime (1:1, monotonic) stays silent.
+        ticks = np.column_stack(
+            (np.array([0, 25, 50, 75, 100], dtype="<i4"),
+             np.zeros(5, dtype="<i4")),
+        ).astype("<i4").tobytes()
+        z.writestr("channel_1_300_0_2_1", ticks)
+        # OBD per-PID timestamp file: must not warn, must not enter metadata.
+        z.writestr("channel_12_200_1001_2_1", ts.tobytes())
+        z.writestr("channel2_12_200_1001_1001_3",
+                   np.full(5, 10.0, dtype="<f8").tobytes())
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    assert "corrupt" not in capsys.readouterr().out
+    assert list(log.metadata["rcz_uptime_clocks"]) == ["channel_1_300_0_2_1"]
+
+
+def test_rcz_session_notes_land_in_metadata(tmp_path):
+    """session.json notes/description survive as short_comment metadata."""
+    first = 1_700_000_000_000
+    ts = (first + np.arange(4, dtype="<i8") * 100).astype("<i8")
+    path = tmp_path / "notes.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+            "notes": "Evening session, new rear pads",
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(4, 10_000, dtype="<i4").tobytes())
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    assert log.metadata["short_comment"] == "Evening session, new rear pads"
+
+
+def _write_fragment_rcz(path, first, gps_types=("300",), fragment=None,
+                        laps=None):
+    """Write an RCZ with the given GPS families plus an optional fragment."""
+    n = 5
+    ts = (first + np.arange(n, dtype="<i8") * 40).astype("<i8")
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first,
+            "laps": laps if laps is not None else [],
+        }))
+        for gps_type in gps_types:
+            z.writestr(f"channel_1_{gps_type}_0_1_1", ts.tobytes())
+            z.writestr(f"channel_1_{gps_type}_0_4_0",
+                       np.full(n, 20_000, dtype="<i4").tobytes())
+        if fragment is not None:
+            z.writestr("sessionfragment.json", json.dumps(fragment))
+
+
+def test_rcz_fragment_declaration_prefers_declared_gps(tmp_path):
+    """Fragment-declared GPS wins; absent declarations fall back to legacy."""
+    first = 1_700_000_000_000
+
+    # Legacy order without a fragment: 300 beats 100.
+    plain = tmp_path / "dual-gps-plain.rcz"
+    _write_fragment_rcz(plain, first, gps_types=("300", "100"))
+    legacy = DataLog()
+    legacy.from_rcz_log(str(plain))
+    assert legacy.metadata["gps_source"] == "rcz_gps_1_300"
+
+    # The same pack with a fragment declaring 100 resolves to 100.
+    declared = tmp_path / "dual-gps-declared.rcz"
+    _write_fragment_rcz(declared, first, gps_types=("300", "100"), fragment={
+        "primaryGpsDeviceIndex": 100,
+        "imuAccDevice": 101,
+        "imuGyroDevice": 102,
+    })
+    log = DataLog()
+    log.from_rcz_log(str(declared))
+    assert log.metadata["gps_source"] == "rcz_gps_1_100"
+    assert log.metadata["rcz_device_roles"] == {
+        "gps": "100", "accel": "101", "gyro": "102",
+    }
+    np.testing.assert_allclose(
+        log.channels["Ground Speed"].values,
+        legacy.channels["Ground Speed"].values,
+    )
+
+    # Declared-but-absent family falls back to the present one.
+    missing = tmp_path / "dual-gps-missing.rcz"
+    _write_fragment_rcz(missing, first, gps_types=("300",), fragment={
+        "primaryGpsDeviceIndex": 200,
+    })
+    fallback = DataLog()
+    fallback.from_rcz_log(str(missing))
+    assert fallback.metadata["gps_source"] == "rcz_gps_1_300"
+    assert "Ground Speed" in fallback.channels
+
+
+def test_rcz_single_device_fragment_is_channel_identical(tmp_path):
+    """A fragment declaring the only present family changes no samples."""
+    first = 1_700_000_000_000
+    plain = tmp_path / "single-plain.rcz"
+    _write_fragment_rcz(plain, first, gps_types=("300",))
+    declared = tmp_path / "single-declared.rcz"
+    _write_fragment_rcz(declared, first, gps_types=("300",), fragment={
+        "primaryGpsDeviceIndex": 300,
+    })
+
+    base, with_fragment = DataLog(), DataLog()
+    base.from_rcz_log(str(plain))
+    with_fragment.from_rcz_log(str(declared))
+
+    assert set(with_fragment.channels) == set(base.channels)
+    for name in base.channels:
+        np.testing.assert_array_equal(
+            with_fragment.channels[name].timestamps,
+            base.channels[name].timestamps,
+        )
+        np.testing.assert_array_equal(
+            with_fragment.channels[name].values,
+            base.channels[name].values,
+        )
+
+
+def test_rcz_fragment_bias_and_videos_land_in_metadata(tmp_path, caplog):
+    """gyroBias is recorded for consumers (not applied); videos are counted."""
+    import logging
+
+    first = 1_700_000_000_000
+    path = tmp_path / "fragment-meta.rcz"
+    _write_fragment_rcz(path, first, gps_types=("100",), fragment={
+        "primaryGpsDeviceIndex": 100,
+        "imuAccDevice": 101,
+        "imuGyroDevice": 102,
+        "devices2": {"102": {"gyroBias": [-2.141, 0.741, 1.052]}},
+        "videos": [{"name": "front.mp4"}, {"name": "rear.mp4"}],
+    })
+
+    log = DataLog()
+    with caplog.at_level(
+        logging.DEBUG, logger="track_telemetry_converter.parsers.rcz_parser",
+    ):
+        log.from_rcz_log(str(path))
+
+    assert log.metadata["rcz_gyro_bias_declared"] == [-2.141, 0.741, 1.052]
+    assert log.metadata["rcz_videos_count"] == 2
+    assert "video" in caplog.text
+    # Faithful reader: no channel carries a bias-corrected duplicate.
+    assert "Ground Speed" in log.channels
+
+
+def test_rcz_magnetometer_archived_and_zero_uptime_only_validated(tmp_path, capsys):
+    """Device-8 28/29/30 archive raw; an all-zero _2_1 stores no channel."""
+    first = 1_700_000_000_000
+    n = 5
+    ts = (first + np.arange(n, dtype="<i8") * 40).astype("<i8")
+    mag_ts = (first + np.arange(n, dtype="<i8") * 80).astype("<i8")
+    mag_x = np.array([1000, -2000, 3000, -4000, 5000], dtype="<i4")
+    mag_y = np.array([-15000, 20000, -25000, 29999, -30000], dtype="<i4")
+    mag_z = np.array([0, 100, -100, 200, -200], dtype="<i4")
+    zeros = np.zeros((n, 2), dtype="<i4").tobytes()
+    path = tmp_path / "mag.rcz"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_300_0_1_1", ts.tobytes())
+        z.writestr("channel_1_300_0_4_0",
+                   np.full(n, 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_8_400_0_1_1", mag_ts.tobytes())
+        z.writestr("channel_8_400_0_28_0", mag_x.tobytes())
+        z.writestr("channel_8_400_0_29_0", mag_y.tobytes())
+        z.writestr("channel_8_400_0_30_0", mag_z.tobytes())
+        z.writestr("channel_8_400_0_2_1", zeros)
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    for name in ("Magnetic Field X", "Magnetic Field Y", "Magnetic Field Z"):
+        assert log.channels[name].units == ""
+        np.testing.assert_array_equal(
+            log.channels[name].timestamps,
+            log.channels["Ground Speed"].timestamps,
+        )
+    # Raw counts survive the resample at the shared epochs (GPS 0..160 ms
+    # sits inside the mag 0..320 ms clock; shared epochs are exact:
+    # GPS idx 0/2/4 = 0/80/160 ms = mag samples 0/1/2).
+    np.testing.assert_allclose(
+        log.channels["Magnetic Field X"].values[[0, 2, 4]],
+        [1000, -2000, 3000],
+    )
+    np.testing.assert_allclose(
+        log.channels["Magnetic Field Y"].values[[0, 2, 4]],
+        [-15000, 20000, -25000],
+    )
+    # The degraded all-zero uptime companion is validated, never stored.
+    assert "Magnetic Field" not in log.metadata.get("rcz_uptime_clocks", {})
+    assert (
+        log.metadata["rcz_uptime_clocks"]["channel_8_400_0_2_1"]["samples"] == n
+    )
+    assert not [
+        name for name in log.channels if "uptime" in name.lower()
+    ]
+    assert "Ground Speed" in log.channels
+
+
+def test_rcz_invalid_laps_are_excluded(tmp_path):
+    """laps[].isInvalid=True never seeds reconstruction (else zero impact)."""
+    first = 1_700_000_000_000
+    laps = [
+        {
+            "number": 10,
+            "sessionResume": 0,
+            "startTimestamp": first + 20_000,
+            "finishTimestamp": first + 50_000,
+            "isInvalid": False,
+        },
+        {
+            "number": 11,
+            "sessionResume": 0,
+            "startTimestamp": first + 50_000,
+            "finishTimestamp": first + 80_000,
+            "isInvalid": True,
+        },
+    ]
+    flagged = tmp_path / "invalid-lap.rcz"
+    _write_fragment_rcz(flagged, first, gps_types=("300",), laps=laps)
+    clean = tmp_path / "clean-lap.rcz"
+    _write_fragment_rcz(clean, first, gps_types=("300",), laps=[laps[0]])
+
+    flagged_log, clean_log = DataLog(), DataLog()
+    flagged_log.from_rcz_log(str(flagged))
+    clean_log.from_rcz_log(str(clean))
+
+    assert [lap["type"] for lap in flagged_log.laps_info["laps"]] == [
+        lap["type"] for lap in clean_log.laps_info["laps"]
+    ]
+    assert flagged_log.laps_info["total_laps"] == clean_log.laps_info["total_laps"]
+    # The invalid lap contributes no timed segment.
+    assert not [
+        lap for lap in flagged_log.laps_info["laps"]
+        if lap.get("orig_num") == 11
+    ]

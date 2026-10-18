@@ -45,6 +45,12 @@ def write_csv(data_log, csv_filename, wallclock=False):
         (data_log.channels[n].timestamps, data_log.channels[n].values)
         for n in names
     ]
+    # GPS coordinates need full precision: %.6g keeps only ~10 m steps at
+    # these magnitudes, which breaks any downstream GPS reuse of the file.
+    fmts = [
+        "%.7f" if n in (CH_GPS_LATITUDE, CH_GPS_LONGITUDE) else "%.6g"
+        for n in names
+    ]
     nonempty = [(ts, vs) for ts, vs in arrays if len(ts) > 0]
     if not nonempty:
         return False
@@ -76,19 +82,26 @@ def write_csv(data_log, csv_filename, wallclock=False):
         writer.writerow([time_col] + names)
 
         if common_grid:
-            fmts = ["%.3f"] + ["%.6g"] * len(nonempty)
+            fmt_line = ["%.3f"] + fmts
             for start in range(0, len(grid), 50000):
                 end = min(start + 50000, len(grid))
                 chunk = np.empty((end - start, len(nonempty) + 1), dtype=np.float64)
                 chunk[:, 0] = grid[start:end] + t0_wall
                 for j, (_, vs) in enumerate(nonempty):
                     chunk[:, j + 1] = vs[start:end]
-                np.savetxt(f, chunk, fmt=fmts, delimiter=",", newline="\r\n")
+                np.savetxt(
+                    f,
+                    chunk,
+                    fmt=fmt_line,
+                    delimiter=",",
+                    newline="\r\n",
+                )
             return True
 
         timeline = np.unique(np.concatenate([ts for ts, _ in nonempty]))
 
         idx = {name: 0 for name in names}
+        gps_names = {CH_GPS_LATITUDE, CH_GPS_LONGITUDE}
         for t in timeline:
             t_out = t + t0_wall if wallclock else t
             row = [f"{t_out:.3f}"]
@@ -103,7 +116,8 @@ def write_csv(data_log, csv_filename, wallclock=False):
                 while j + 1 < len(timestamps) and timestamps[j + 1] <= t:
                     j += 1
                 idx[name] = j
-                row.append(f"{ch.values[j]:.6g}")
+                value = ch.values[j]
+                row.append(f"{value:.7f}" if name in gps_names else f"{value:.6g}")
             writer.writerow(row)
 
     return True

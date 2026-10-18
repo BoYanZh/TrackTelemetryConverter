@@ -63,9 +63,9 @@ Status: `map` = in RCZ_PID_MAP (scale shown), `raw` = intentionally unmapped (cu
 | 25 | Y rotation vector | y_rotation_vector | 19 | None |  | - |
 | 26 | Z rotation vector | z_rotation_vector | 19 | None |  | - |
 | 27 | Scalar rotation vector | scalar_rotation_vector | 19 | None |  | - |
-| 28 | X magnetic field | x_magnetic_field | 27 | None |  | - |
-| 29 | Y magnetic field | y_magnetic_field | 27 | None |  | - |
-| 30 | Z magnetic field | z_magnetic_field | 27 | None |  | - |
+| 28 | X magnetic field | x_magnetic_field | 27 | None |  | map raw x1.0 (device-8, uncertain) |
+| 29 | Y magnetic field | y_magnetic_field | 27 | None |  | map raw x1.0 (device-8, uncertain) |
+| 30 | Z magnetic field | z_magnetic_field | 27 | None |  | map raw x1.0 (device-8, uncertain) |
 | 37 | Lean angle | lean_angle | 11 | deg |  | - |
 | 38 | Pitch | pitch | 11 | deg |  | - |
 | 39 | Yaw | yaw | 11 | deg |  | - |
@@ -241,3 +241,6 @@ Status: `map` = in RCZ_PID_MAP (scale shown), `raw` = intentionally unmapped (cu
 - Device-12 and device-4 share `RCZ_PID_MAP` by numeric pid. No corpus device-4 file collides with the new entries; the `rcz_dev4_pid_overrides` mechanism exists for future divergences.
 - Table pinned to v10.2.4; firmware drift risk on app updates.
 - Future-PID workflow: census (`channel2_12_*` PIDs across corpus) -> look up above -> value-check ranges/units against this table -> map + synthetic-RCZ test. Never map unobserved PIDs.
+- GPS-family value files (30002/30003/30007/46/30004/30005) parse as `GPS Aux A-F` with uncertain semantics: app names + value ranges suggest sats/fix/accuracy/battery/coordinate+altitude precision (30002 is count-x1000 in the 2026-02-19 pack, 30004/30005 use INT32_MAX for unknown), but no paired RCZ+CSV cross-check survives to promote them; device-4 temps (10026/10066) are Fahrenheit and convert to C, and device-4 PIDs 49/50 map to roll/pitch rate.
+- Phone IMU scheme `2_100/3_101` (2026-03-07 pack, alongside the 300-series box) probes last so box-first priority and single-device outputs are unchanged; `channel_12_*_2_1` files are per-PID OBD clocks, excluded from the `*_2_1` uptime check.
+- 2026-10-18: `sessionfragment.json` declarations select GPS/IMU devices first (legacy order = fallback, single-device outputs unchanged), `gyroBias`/`videos` land in metadata only (no de-bias path), device-8 magnetometer 28/29/30 archives raw as Magnetic Field X/Y/Z (uncertain, paired epoch required, `*_2_1` validation-only), `laps[].isInvalid` is filtered (305 corpus laps all False = zero impact), 30005/30006 stay dormant.

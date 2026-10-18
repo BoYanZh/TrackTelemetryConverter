@@ -187,7 +187,7 @@ def _parse_ibt_vars(raw_file, geo, dt):
         var_meta[vname] = (dtype, voffset, vcount, vunit)
 
     raw_data = raw_file[geo.buf_offset: geo.buf_offset + geo.n_ticks * geo.buf_len]
-    times = [i * dt for i in range(geo.n_ticks)]
+    times = np.arange(geo.n_ticks, dtype=np.float64) * dt
     return var_meta, raw_data, times
 
 
@@ -210,22 +210,7 @@ def _add_ibt_channel(data_log, var_meta, raw_data, geo, times, ibt_name, ch_name
         return
     data_log.add_channel(ch_name, units, float, decimals)
     vals = convert(arr) if convert else arr
-    ch = data_log.channels[ch_name]
-    for i in range(geo.n_ticks):
-        ch.messages.append(Message(times[i], float(vals[i])))
-
-    # --- 6. Lap detection: raw Lap counter transitions ---
-    # Every forward increment of the iRacing 'Lap' counter represents a
-    # real crossing of the S/F timing line (including quick-reset laps).
-    # Backward transitions (e.g. 16->0) are quick-reset drops and are
-    # automatically skipped because prev_lap only updates on a beacon hit.
-    lap_arr = _extract_ibt_var(var_meta, raw_data, geo.buf_len, geo.n_ticks, "Lap")
-    _build_ibt_laps(data_log, lap_arr, times, geo.n_ticks)
-
-    # Cleanup empty channels
-    empty = [name for name, ch in data_log.channels.items() if not ch.messages]
-    for name in empty:
-        del data_log.channels[name]
+    data_log.channels[ch_name].set_samples(times, np.asarray(vals, dtype=np.float64))
 
 
 def _build_ibt_laps(data_log, lap_arr, times, n_ticks):
@@ -233,36 +218,31 @@ def _build_ibt_laps(data_log, lap_arr, times, n_ticks):
     data_log.add_channel(CH_LAP_NUMBER, "", float, 0)
 
     if lap_arr is None or len(lap_arr) <= 1:
-        data_log.channels[CH_LAP_NUMBER].messages = [Message(times[0], 1.0)]
+        data_log.channels[CH_LAP_NUMBER].messages = [Message(float(times[0]), 1.0)]
         return
 
-    beacons = []
-    prev_lap = lap_arr[0]
-    for i in range(1, len(lap_arr)):
-        new_val = lap_arr[i]
-        if new_val > prev_lap and new_val > 0:
-            beacons.append((times[i], f"Lap {int(new_val)}"))
-            prev_lap = new_val
+    # Vectorized beacon detection: a hit at i requires lap_arr[i] to exceed
+    # the running maximum of all previous samples (prev only updates on a
+    # hit, so quick-reset drops like 16->0 can never retrigger) and be > 0.
+    prev_max = np.maximum.accumulate(lap_arr)
+    hits = (lap_arr[1:] > prev_max[:-1]) & (lap_arr[1:] > 0)
+    hit_idx = np.where(hits)[0] + 1
+
+    beacons = [(float(times[i]), f"Lap {int(lap_arr[i])}") for i in hit_idx]
 
     data_log.laps_info["beacons"] = beacons
 
     # Build lap_number channel (0 before first S/F crossing, then 1,2,3...)
-    lap_nums = np.zeros(n_ticks, dtype=int)
-    label_counter = 0
-    prev_lap_val = lap_arr[0]
-    for i in range(1, n_ticks):
-        v = lap_arr[i]
-        if v > prev_lap_val and v > 0:
-            label_counter += 1
-            prev_lap_val = v
-        lap_nums[i] = label_counter
+    lap_nums = np.zeros(n_ticks, dtype=np.float64)
+    if len(hit_idx):
+        lap_nums[hit_idx] = 1.0
+        lap_nums = np.cumsum(lap_nums)
 
-    for i in range(n_ticks):
-        data_log.channels[CH_LAP_NUMBER].messages.append(Message(times[i], float(lap_nums[i])))
+    data_log.channels[CH_LAP_NUMBER].set_samples(times, lap_nums)
 
     # Build laps_info structure (every segment between beacons is a lap)
     lap_items = []
-    total_dur = times[-1] if len(times) > 0 else 0.0
+    total_dur = float(times[-1]) if len(times) > 0 else 0.0
     fastest_lap = None
     fastest_dur = float("inf")
 
