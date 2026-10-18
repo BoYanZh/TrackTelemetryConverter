@@ -14,18 +14,18 @@ from ..channels import (
     CH_CG_ACCEL_LON,
     CH_CG_ACCEL_VERT,
     CH_COOLANT_TEMP,
+    CH_DEVICE_BATTERY,
     CH_ENGINE_OIL_TEMP,
     CH_G_COMBINED,
+    CH_GPS_ACCURACY,
     CH_GPS_ALTITUDE,
-    CH_GPS_AUX_A,
-    CH_GPS_AUX_B,
-    CH_GPS_AUX_C,
-    CH_GPS_AUX_D,
     CH_GPS_AUX_E,
     CH_GPS_AUX_F,
+    CH_GPS_FIX,
     CH_GPS_HEADING,
     CH_GPS_LATITUDE,
     CH_GPS_LONGITUDE,
+    CH_GPS_SATS,
     CH_GROUND_SPEED,
     CH_LAP_NUMBER,
     CH_MAG_X,
@@ -650,14 +650,17 @@ def _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_sample
                 populate_channel(CH_GPS_HEADING, "deg", raw_hdg / 1000.0)
 
 def _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channel, populate_channel):
-    """Collect GPS-family value files of uncertain semantics (30002/30003/30007/46/30004/30005).
+    """Collect GPS-family value files of verified + uncertain semantics.
 
-    All ride the GPS clock 1:1 (4 bytes/sample). Names stay neutral
-    (GPS Aux A-F) because no paired RCZ+CSV cross-check survives in the
-    corpus; the likely mapping (app tables + value ranges: A=satellites,
-    B=fix type, C=accuracy in m, D=device battery in %, E/F=coordinate /
-    altitude precision in m) is recorded here, not asserted. Absent or
-    short files are skipped, so older packs are unaffected.
+    30002/30003/30007/46 ride the GPS clock 1:1 (4 bytes/sample) and are
+    VERIFIED against a paired RaceChrono CSV export of the same session
+    (2026-10-04 Thunder Hill East Bypass: all 5 stints, 126,746 GPS
+    samples -- A↔satellites and B↔fix match exactly, C↔accuracy and
+    D↔battery within CSV text rounding), so they land under their
+    canonical names. 30004/30005 stay neutral (GPS Aux E/F): INT32_MAX
+    marks unknown precision -- kept missing (NaN), not a
+    two-million-metre error -- and no paired CSV column exists to promote
+    them. Absent or short files are skipped, so older packs are unaffected.
     """
     if not gps_prefix:
         return
@@ -670,26 +673,26 @@ def _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channe
             return None
         return values[:n_samples].astype(np.float64)
 
-    # A (30002): modern packs store raw counts (11 ~ 16); the 2026-02-19
+    # 30002: modern packs store raw counts (12 ~ 16); the 2026-02-19
     # pack stores count x 1000 (3000 ~ 16000). Counts above 100 cannot be
-    # raw satellites, so divide. Either way the uncertain name stands.
+    # raw satellites, so divide.
     aux_a = _read_i4(gps_prefix + "30002_0")
     if aux_a is not None:
         if np.nanmax(aux_a) > 100:
             aux_a = aux_a / 1000.0
-        populate_channel(CH_GPS_AUX_A, "", aux_a, 0)
+        populate_channel(CH_GPS_SATS, "", aux_a, 0)
 
     aux_b = _read_i4(gps_prefix + "30003_0")
     if aux_b is not None:
-        populate_channel(CH_GPS_AUX_B, "", aux_b, 0)
+        populate_channel(CH_GPS_FIX, "", aux_b, 0)
 
     aux_c = _read_i4(gps_prefix + "30007_0")
     if aux_c is not None:
-        populate_channel(CH_GPS_AUX_C, "m", aux_c / 1000.0)
+        populate_channel(CH_GPS_ACCURACY, "m", aux_c / 1000.0)
 
     aux_d = _read_i4(gps_prefix + "46_0")
     if aux_d is not None:
-        populate_channel(CH_GPS_AUX_D, "%", aux_d / 1000.0, 1)
+        populate_channel(CH_DEVICE_BATTERY, "%", aux_d / 1000.0, 1)
 
     # E/F (30004/30005): INT32_MAX marks unknown precision -- keep it
     # missing (NaN), not a 2-million-metre error.

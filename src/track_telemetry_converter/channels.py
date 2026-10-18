@@ -45,22 +45,21 @@ CH_GEARBOX_TEMP         = "Gearbox Temp"
 CH_YAW_RATE             = "Chassis Yaw Rate"
 CH_ROLL_RATE            = "Chassis Roll Rate"
 CH_PITCH_RATE           = "Chassis Pitch Rate"
-# GPS Aux A-F: raw RaceChrono GPS-family value files (30002/30003/30007 /
-# 46 / 30004 / 30005) collected 1:1 with the GPS clock. Semantics are
-# UNCERTAIN (no paired RCZ+CSV cross-check left in the corpus): likely
-# A=satellites, B=fix type, C=accuracy, D=device battery, E/F=coordinate /
-# altitude precision per the v10.2.4 app tables + value ranges, but the
-# names stay neutral until a paired CSV promotes them. See
+# GPS Aux E/F: raw RaceChrono GPS-family value files (30004 / 30005)
+# collected 1:1 with the GPS clock. Semantics are UNCERTAIN (no paired
+# RCZ+CSV cross-check in the corpus): likely coordinate / altitude
+# precision per the v10.2.4 app tables + value ranges, but the names stay
+# neutral until a paired CSV promotes them. See
 # docs/research/racechrono-pid-tables.md.
-CH_GPS_AUX_A            = "GPS Aux A"
-CH_GPS_AUX_B            = "GPS Aux B"
-CH_GPS_AUX_C            = "GPS Aux C"
-CH_GPS_AUX_D            = "GPS Aux D"
+# (Former Aux A-D were promoted to canonical names on 2026-10-18: paired
+# 2026-10-04 Thunder Hill East Bypass RCZ+CSV verified sample-for-sample
+# that 30002 = GPS Satellites, 30003 = GPS Fix, 30007 = GPS Accuracy and
+# 46 = Device Battery.)
 CH_GPS_AUX_E            = "GPS Aux E"
 CH_GPS_AUX_F            = "GPS Aux F"
 # Magnetometer X/Y/Z: raw RaceChrono device-8 value files (28/29/30,
 # int32, observed ±30000 in the 2026-03-07 pack with a valid paired epoch
-# stream). Semantics are UNCERTAIN the same way GPS Aux A-F are: app-table
+# stream). Semantics are UNCERTAIN the same way GPS Aux E/F are: app-table
 # names (X/Y/Z magnetic field) + value ranges only, no paired cross-check,
 # so the scale stays raw counts (x1.0) until a paired CSV promotes them.
 # Device-8 `*_2_1` uptime files are validation-only, never stored.

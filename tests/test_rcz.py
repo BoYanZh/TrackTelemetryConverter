@@ -770,11 +770,12 @@ def _write_gps_aux_rcz(path, first, sats_raw, fix_raw=None, accuracy_mm=None,
                        np.array(values, dtype="<i4").tobytes())
 
 
-def test_rcz_gps_aux_channels_keep_uncertain_names(tmp_path):
-    """GPS Aux A/B/C/D parse 1:1 with the GPS clock under neutral names.
+def test_rcz_gps_aux_promoted_to_canonical_names(tmp_path):
+    """GPS value files 30002/30003/30007/46 parse under verified real names.
 
-    No paired RCZ+CSV cross-check survives in the corpus, so the likely
-    app-table semantics stay in comments, not in channel names.
+    Paired 2026-10-04 Thunder Hill East Bypass RCZ+CSV cross-check (all 5
+    stints, 126,746 GPS samples): A↔satellites and B↔fix match exactly,
+    C↔accuracy and D↔battery within CSV text rounding.
     """
     first = 1_700_000_000_000
     path = tmp_path / "gps-aux.rcz"
@@ -789,22 +790,23 @@ def test_rcz_gps_aux_channels_keep_uncertain_names(tmp_path):
     log = DataLog()
     log.from_rcz_log(str(path))
 
-    aux_a = log.channels["GPS Aux A"]
-    assert aux_a.units == ""
-    np.testing.assert_allclose(aux_a.values, [14, 15, 15, 14, 13])
+    sats = log.channels["GPS Satellites"]
+    assert sats.units == ""
+    np.testing.assert_allclose(sats.values, [14, 15, 15, 14, 13])
     np.testing.assert_allclose(
-        log.channels["GPS Aux B"].values, [3, 3, 3, 3, 3],
+        log.channels["GPS Fix"].values, [3, 3, 3, 3, 3],
     )
-    aux_c = log.channels["GPS Aux C"]
-    assert aux_c.units == "m"
-    np.testing.assert_allclose(aux_c.values, [1.129, 1.125, 1.122, 1.119, 1.116])
-    aux_d = log.channels["GPS Aux D"]
-    assert aux_d.units == "%"
-    np.testing.assert_allclose(aux_d.values, [84.0, 84.0, 83.0, 83.0, 82.0])
-    # E/F absent here: skipped, not zero-filled.
-    assert "GPS Aux E" not in log.channels
-    assert "GPS Aux F" not in log.channels
-    # Existing channels untouched by the new companions.
+    acc = log.channels["GPS Accuracy"]
+    assert acc.units == "m"
+    np.testing.assert_allclose(acc.values, [1.129, 1.125, 1.122, 1.119, 1.116])
+    bat = log.channels["Device Battery"]
+    assert bat.units == "%"
+    np.testing.assert_allclose(bat.values, [84.0, 84.0, 83.0, 83.0, 82.0])
+    # Old neutral names are gone; E/F absent here: skipped, not zero-filled.
+    for stale in ("GPS Aux A", "GPS Aux B", "GPS Aux C", "GPS Aux D",
+                  "GPS Aux E", "GPS Aux F"):
+        assert stale not in log.channels
+    # Existing channels untouched by the renamed companions.
     np.testing.assert_allclose(log.channels["Ground Speed"].values, 72.0)
 
 
@@ -820,7 +822,7 @@ def test_rcz_gps_aux_a_decodes_legacy_x1000_counts(tmp_path):
     log.from_rcz_log(str(path))
 
     np.testing.assert_allclose(
-        log.channels["GPS Aux A"].values, [3, 12, 14, 15, 16],
+        log.channels["GPS Satellites"].values, [3, 12, 14, 15, 16],
     )
 
 
@@ -844,6 +846,43 @@ def test_rcz_gps_aux_precision_sentinel_stays_missing(tmp_path):
     aux_f = log.channels["GPS Aux F"].values
     assert np.isnan(aux_f[0]) and np.isnan(aux_f[4])
     assert aux_f[1] == 1.9
+
+
+def test_rcz_gps_aux_matches_paired_csv_export(tmp_path):
+    """Miniature of the 2026-10-04 paired proof: synthetic RCZ GPS value
+    files and a synthetic RaceChrono CSV export of the same samples land
+    on identical canonical channels (the full-size corpus pair is ~265 MB
+    and stays out of the repo)."""
+    first = 1_700_000_000_000
+    path = tmp_path / "gps-aux-paired.rcz"
+    _write_gps_aux_rcz(
+        path, first,
+        sats_raw=[14, 15, 15, 14, 13],
+        fix_raw=[3, 3, 3, 3, 3],
+        accuracy_mm=[1129, 1125, 1122, 1119, 1116],
+        battery_mpc=[84000, 84000, 83000, 83000, 82000],
+    )
+    rcz_log = DataLog()
+    rcz_log.from_rcz_log(str(path))
+
+    csv_lines = [
+        "timestamp,satellites,fix_type,accuracy,device_battery_level\n",
+        "unix time,sats,,m,%\n",
+        "0.0,14,3,1.129,84\n",
+        "0.04,15,3,1.125,84\n",
+        "0.08,15,3,1.122,83\n",
+        "0.12,14,3,1.119,83\n",
+        "0.16,13,3,1.116,82\n",
+    ]
+    csv_log = DataLog()
+    csv_log.from_racechrono_log(csv_lines)
+
+    for name in ("GPS Satellites", "GPS Fix", "GPS Accuracy", "Device Battery"):
+        np.testing.assert_allclose(
+            rcz_log.channels[name].values, csv_log.channels[name].values,
+            err_msg=f"paired RCZ/CSV mismatch on {name}",
+        )
+        assert rcz_log.channels[name].units == csv_log.channels[name].units
 
 
 def test_rcz_secondary_imu_uses_suffixed_channels(tmp_path):
