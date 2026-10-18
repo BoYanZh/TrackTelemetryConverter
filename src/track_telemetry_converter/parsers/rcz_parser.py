@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -177,7 +178,7 @@ def _parse_rcz_fragment_decl(fragment):
     is recorded for consumers, not applied: the parser stays a faithful
     reader (cf. docs/research/rcz-device-model.md).
     """
-    decl = {"gps": None, "accel": None, "gyro": None,
+    decl: dict[str, Any] = {"gps": None, "accel": None, "gyro": None,
             "gyro_bias": None, "videos_count": None}
     if not isinstance(fragment, dict):
         return decl
@@ -719,9 +720,9 @@ def _populate_rcz_magnetometer(data_log, namelist, times_sec, n_samples, time_or
     import re
     _mag_re = re.compile(r"^channel_8_(\d+)_0_(28|29|30)_0$")
     families = sorted({
-        _mag_re.match(os.path.basename(name)).group(1)
-        for name in namelist
-        if _mag_re.match(os.path.basename(name))
+        m.group(1)
+        for m in (_mag_re.match(os.path.basename(n)) for n in namelist)
+        if m is not None
     })
     if not families:
         return
@@ -869,14 +870,14 @@ def _populate_rcz_imu(data_log, namelist, times_sec, n_samples, time_origin_epoc
         # positive vehicle/CAN yaw convention used for this channel.
         _parse_imu_channel(gyro_z_file, CH_YAW_RATE, "deg/s",
                            -1.0 / 1000.0, ts_key=gyro_ts_file)
-        data_log.metadata["yaw_rate_source"] = f"rcz_gyro_3_{g_type}"
+        data_log.metadata["yaw_rate_source"] = f"rcz_gyro_3_{primary_gyro_type}"
         data_log.metadata["yaw_axis_sign_verified"] = True
         # Gyroscope X/Y ride the same device clock (12 = X/roll,
         # 13 = Y/pitch per the RaceChrono rotation-rate table). Same
         # sensor-frame scale as Z; X/Y sign is unverified (no CAN
         # reference) and left as-recorded. Missing files are skipped
         # inside _parse_imu_channel, so older packs are unaffected.
-        gyro_prefix = f"channel_3_{g_type}_0_"
+        gyro_prefix = f"channel_3_{primary_gyro_type}_0_"
         _parse_imu_channel(gyro_prefix + "12_0", CH_ROLL_RATE, "deg/s",
                            -1.0 / 1000.0, ts_key=gyro_ts_file)
         _parse_imu_channel(gyro_prefix + "13_0", CH_PITCH_RATE, "deg/s",

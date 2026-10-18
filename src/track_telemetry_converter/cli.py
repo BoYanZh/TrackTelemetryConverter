@@ -912,24 +912,11 @@ def _batch_output_override(fpath, detected, output_dir):
     return None
 
 
-def _batch_convert(args):
-    """Convert every recognized log in a directory, detecting each file's format.
+def _batch_validate_dir_args(args):
+    """Reject single-file-only options in directory (batch) mode.
 
-    With AUTO (recommended), each file's type is detected individually, so RCZ,
-    CSV, VBO, DLAP, IBT, XRK, and FIT inputs can be mixed in one run. Only
-    whitelisted convertible extensions are attempted (see
-    parsers.SUPPORTED_INPUT_EXTENSIONS); anything else (video, configs,
-    images, ...) is counted as skipped, never failed. Outputs are
-    written next to each input unless --output-dir is given, in which case
-    they are flattened to plain filenames inside that directory (created
-    when missing); existing outputs are skipped unless --force is
-    given. Returns exit code (0 unless at least one file failed).
+    Returns an exit code when validation fails, else None.
     """
-    import copy
-    import io
-    from contextlib import redirect_stdout
-
-    dir_path = args.log
     if args.output:
         print("ERROR: --output cannot be used with a directory; outputs are written next to each input")
         return 1
@@ -945,12 +932,16 @@ def _batch_convert(args):
     if str(getattr(args, "lap", "all")).lower() != "all":
         print("ERROR: --lap cannot be used with a directory")
         return 1
+    return None
 
-    if args.log_type == "AUTO":
-        wanted = _BATCH_AUTO_EXTENSIONS
-    else:
-        wanted = _BATCH_TYPE_EXTENSIONS.get(args.log_type, ())
-    if getattr(args, "recursive", False):
+
+def _batch_collect_files(dir_path, wanted, recursive):
+    """Gather batch inputs; None (after printing an error) when empty.
+
+    Returns ``(candidates, files)`` where ``candidates`` is every file
+    under the directory and ``files`` the sorted convertible subset.
+    """
+    if recursive:
         candidates = [
             os.path.join(root, name)
             for root, _, names in os.walk(dir_path)
@@ -965,7 +956,106 @@ def _batch_convert(args):
     files = sorted(path for path in candidates if path.lower().endswith(wanted))
     if not files:
         print("ERROR: No convertible logs ({}) found in directory '{}'".format(", ".join(wanted), dir_path))
+        return None
+    return (candidates, files)
+
+
+def _batch_prepare_file(args, fpath, expand_backups, output_dir, skipped, failed):
+    """Build per-file batch args and detect its type.
+
+    Returns ``(file_args, detected, notice)``; ``notice`` is a message the
+    caller prints after the per-file header before skipping the file, or
+    None to proceed with conversion. Returns None when the file was
+    recorded in ``skipped`` (CAN log without ``--dbc``) with nothing left
+    to print.
+    """
+    import copy
+
+    file_args = copy.copy(args)
+    file_args.log = fpath
+    file_args.output = None
+    file_args._batch_mode = True
+    detected = args.log_type
+    if args.log_type == "AUTO":
+        if fpath.lower().endswith(_BATCH_TYPE_EXTENSIONS["CAN"]):
+            if not args.dbc or not os.path.isfile(args.dbc or ""):
+                skipped.append((fpath, "CAN log requires --dbc"))
+                return None
+            detected = "CAN"
+        else:
+            detected = auto_detect_log_type(fpath)
+        file_args.log_type = detected
+    file_args.output = _batch_output_override(fpath, detected, output_dir)
+    if fpath.lower().endswith(".rcz") and detected == "RCZ":
+        try:
+            backup_sessions = discover_rcz_sessions(fpath)
+        except Exception as exc:
+            failed.append(fpath)
+            return (file_args, detected, f"ERROR: Failed to inspect RCZ archive: {exc}")
+        if backup_sessions:
+            if not expand_backups:
+                skipped.append((fpath, "backup archive (use --session all)"))
+                return (
+                    file_args,
+                    detected,
+                    f"Skipped: RaceChrono backup contains {len(backup_sessions)} sessions; "
+                    "re-run with --session all to expand it, or convert one "
+                    "session with '--session ID' on the single file.",
+                )
+        else:
+            # A single-session RCZ must not inherit --session all.
+            file_args.session = None
+    return (file_args, detected, None)
+
+
+def _batch_report_result(index, total, fpath, detected, text):
+    """Echo one finished batch file's captured output under its header."""
+    print("=" * 80)
+    print(f"Processing [{index}/{total}]: {fpath} (type: {detected})")
+    sys.stdout.write(text)
+    if not text.endswith("\n"):
+        print()
+
+
+def _batch_record_result(fpath, code, text, converted, skipped, failed):
+    """Classify one finished batch conversion into converted/skipped/failed."""
+    if code == 0:
+        converted.append(fpath)
+    elif "already exists" in text:
+        skipped.append((fpath, "output already exists (use --force)"))
+    else:
+        failed.append(fpath)
+
+
+def _batch_convert(args):
+    """Convert every recognized log in a directory, detecting each file's format.
+
+    With AUTO (recommended), each file's type is detected individually, so RCZ,
+    CSV, VBO, DLAP, IBT, XRK, and FIT inputs can be mixed in one run. Only
+    whitelisted convertible extensions are attempted (see
+    parsers.SUPPORTED_INPUT_EXTENSIONS); anything else (video, configs,
+    images, ...) is counted as skipped, never failed. Outputs are
+    written next to each input unless --output-dir is given, in which case
+    they are flattened to plain filenames inside that directory (created
+    when missing); existing outputs are skipped unless --force is
+    given. Returns exit code (0 unless at least one file failed).
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    dir_path = args.log
+    invalid = _batch_validate_dir_args(args)
+    if invalid is not None:
+        return invalid
+
+    if args.log_type == "AUTO":
+        wanted = _BATCH_AUTO_EXTENSIONS
+    else:
+        wanted = _BATCH_TYPE_EXTENSIONS.get(args.log_type, ())
+    gathered = _batch_collect_files(dir_path, wanted, getattr(args, "recursive", False))
+    if gathered is None:
         return 1
+    candidates, files = gathered
 
     expand_backups = args.session is not None and str(args.session).lower() == "all"
     output_dir = getattr(args, "output_dir", None)
@@ -981,44 +1071,15 @@ def _batch_convert(args):
         jobs = 1
     if jobs <= 1:
         for index, fpath in enumerate(files, 1):
-            file_args = copy.copy(args)
-            file_args.log = fpath
-            file_args.output = None
-            file_args._batch_mode = True
-            detected = args.log_type
-            if args.log_type == "AUTO":
-                if fpath.lower().endswith(_BATCH_TYPE_EXTENSIONS["CAN"]):
-                    if not args.dbc or not os.path.isfile(args.dbc or ""):
-                        skipped.append((fpath, "CAN log requires --dbc"))
-                        continue
-                    detected = "CAN"
-                else:
-                    detected = auto_detect_log_type(fpath)
-                file_args.log_type = detected
+            prepared = _batch_prepare_file(args, fpath, expand_backups, output_dir, skipped, failed)
+            if prepared is None:
+                continue
+            file_args, detected, notice = prepared
             print("=" * 80)
             print(f"Processing [{index}/{len(files)}]: {fpath} (type: {detected})")
-            file_args.output = _batch_output_override(fpath, detected, output_dir)
-
-            if fpath.lower().endswith(".rcz") and detected == "RCZ":
-                try:
-                    backup_sessions = discover_rcz_sessions(fpath)
-                except Exception as exc:
-                    print(f"ERROR: Failed to inspect RCZ archive: {exc}")
-                    failed.append(fpath)
-                    continue
-                if backup_sessions:
-                    if not expand_backups:
-                        print(
-                            f"Skipped: RaceChrono backup contains {len(backup_sessions)} sessions; "
-                            "re-run with --session all to expand it, or convert one "
-                            "session with '--session ID' on the single file.",
-                        )
-                        skipped.append((fpath, "backup archive (use --session all)"))
-                        continue
-                else:
-                    # A single-session RCZ must not inherit --session all.
-                    file_args.session = None
-
+            if notice is not None:
+                print(notice)
+                continue
             buffer = io.StringIO()
             try:
                 with redirect_stdout(buffer):
@@ -1030,59 +1091,22 @@ def _batch_convert(args):
                 code = 1
                 buffer.write(f"ERROR: {type(exc).__name__}: {exc}\n")
             text = buffer.getvalue()
-            sys.stdout.write(text)
-            if not text.endswith("\n"):
-                print()
-            if code == 0:
-                converted.append(fpath)
-            elif "already exists" in text:
-                skipped.append((fpath, "output already exists (use --force)"))
-            else:
-                failed.append(fpath)
+            _batch_report_result(index, len(files), fpath, detected, text)
+            _batch_record_result(fpath, code, text, converted, skipped, failed)
     else:
         import concurrent.futures
 
         tasks = []
         for index, fpath in enumerate(files, 1):
-            file_args = copy.copy(args)
-            file_args.log = fpath
-            file_args.output = None
-            file_args._batch_mode = True
-            detected = args.log_type
-            if args.log_type == "AUTO":
-                if fpath.lower().endswith(_BATCH_TYPE_EXTENSIONS["CAN"]):
-                    if not args.dbc or not os.path.isfile(args.dbc or ""):
-                        skipped.append((fpath, "CAN log requires --dbc"))
-                        continue
-                    detected = "CAN"
-                else:
-                    detected = auto_detect_log_type(fpath)
-                file_args.log_type = detected
-            file_args.output = _batch_output_override(fpath, detected, output_dir)
-
-            if fpath.lower().endswith(".rcz") and detected == "RCZ":
-                try:
-                    backup_sessions = discover_rcz_sessions(fpath)
-                except Exception as exc:
-                    print("=" * 80)
-                    print(f"Processing [{index}/{len(files)}]: {fpath} (type: {detected})")
-                    print(f"ERROR: Failed to inspect RCZ archive: {exc}")
-                    failed.append(fpath)
-                    continue
-                if backup_sessions:
-                    if not expand_backups:
-                        print("=" * 80)
-                        print(f"Processing [{index}/{len(files)}]: {fpath} (type: {detected})")
-                        print(
-                            f"Skipped: RaceChrono backup contains {len(backup_sessions)} sessions; "
-                            "re-run with --session all to expand it, or convert one "
-                            "session with '--session ID' on the single file.",
-                        )
-                        skipped.append((fpath, "backup archive (use --session all)"))
-                        continue
-                else:
-                    # A single-session RCZ must not inherit --session all.
-                    file_args.session = None
+            prepared = _batch_prepare_file(args, fpath, expand_backups, output_dir, skipped, failed)
+            if prepared is None:
+                continue
+            file_args, detected, notice = prepared
+            if notice is not None:
+                print("=" * 80)
+                print(f"Processing [{index}/{len(files)}]: {fpath} (type: {detected})")
+                print(notice)
+                continue
             tasks.append((index, fpath, file_args, detected))
 
         print(f"Batch parallel mode: {len(tasks)} files with {jobs} workers")
@@ -1100,18 +1124,9 @@ def _batch_convert(args):
                     detected = args.log_type
                     code, text = 1, f"ERROR: {type(exc).__name__}: {exc}\n"
                     index = task_index
-                print("=" * 80)
-                print(f"Processing [{index}/{len(files)}]: {fpath} (type: {detected})")
-                sys.stdout.write(text)
-                if not text.endswith("\n"):
-                    print()
+                _batch_report_result(index, len(files), fpath, detected, text)
                 sys.stdout.flush()
-                if code == 0:
-                    converted.append(fpath)
-                elif "already exists" in text:
-                    skipped.append((fpath, "output already exists (use --force)"))
-                else:
-                    failed.append(fpath)
+                _batch_record_result(fpath, code, text, converted, skipped, failed)
 
     print("=" * 80)
     print(
