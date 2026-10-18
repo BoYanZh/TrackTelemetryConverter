@@ -1456,3 +1456,102 @@ def test_rcz_invalid_laps_are_excluded(tmp_path):
         lap for lap in flagged_log.laps_info["laps"]
         if lap.get("orig_num") == 11
     ]
+
+
+def _write_suffix_probe_rcz(path, first, extra=None):
+    """Write an RCZ covering every known channel_1_/2_/3_ probe suffix."""
+    n = 5
+    ts = (first + np.arange(n, dtype="<i8") * 40).astype("<i8")
+    lat_lon = np.column_stack((
+        np.full(n, 222_000_000, dtype="<i4"),
+        np.full(n, -732_000_000, dtype="<i4"),
+    ))
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("session.json", json.dumps({
+            "firstTimestamp": first, "timeCreated": first, "laps": [],
+        }))
+        z.writestr("channel_1_200_0_1_1", ts.tobytes())
+        z.writestr("channel_1_200_0_4_0",
+                   np.full(n, 20_000, dtype="<i4").tobytes())
+        z.writestr("channel_1_200_0_3_1", lat_lon.tobytes())
+        z.writestr("channel_1_200_0_5_0",
+                   np.full(n, 100_000, dtype="<i4").tobytes())
+        z.writestr("channel_1_200_0_6_0",
+                   np.full(n, 90_000, dtype="<i4").tobytes())
+        for suffix, values in (
+            ("30002_0", [14] * n), ("30003_0", [3] * n),
+            ("30007_0", [1129] * n), ("46_0", [84000] * n),
+            ("30004_0", [1100] * n), ("30005_0", [1900] * n),
+        ):
+            z.writestr(f"channel_1_200_0_{suffix}",
+                       np.array(values, dtype="<i4").tobytes())
+        ticks = np.column_stack(
+            (np.arange(n, dtype="<i4") * 25, np.zeros(n, dtype="<i4")),
+        ).astype("<i4").tobytes()
+        z.writestr("channel_1_200_0_2_1", ticks)
+        z.writestr("channel_2_201_0_1_1", ts.tobytes())
+        for suffix, raw in (("9_0", -3200), ("10_0", 8500), ("11_0", 9700)):
+            z.writestr(f"channel_2_201_0_{suffix}",
+                       np.full(n, raw, dtype="<i4").tobytes())
+        z.writestr("channel_3_202_0_1_1", ts.tobytes())
+        for suffix, raw in (("12_0", 4000), ("13_0", -6000), ("14_0", -12000)):
+            z.writestr(f"channel_3_202_0_{suffix}",
+                       np.full(n, raw, dtype="<i4").tobytes())
+        # Excluded families: device 8/12/4 keep their own handling.
+        mag_ts = (first + np.arange(n, dtype="<i8") * 80).astype("<i8")
+        z.writestr("channel_8_400_0_1_1", mag_ts.tobytes())
+        z.writestr("channel_8_400_0_28_0",
+                   np.full(n, 1000, dtype="<i4").tobytes())
+        z.writestr("channel_12_200_51_1_1", ts.tobytes())
+        z.writestr("channel2_12_200_51_51_3",
+                   np.full(n, 12.0, dtype="<f8").tobytes())
+        if extra:
+            for name, payload in extra.items():
+                z.writestr(name, payload)
+
+
+def test_rcz_known_suffixes_stay_silent(tmp_path, capsys):
+    """A pack using every known 1/2/3 suffix warns about nothing."""
+    first = 1_700_000_000_000
+    path = tmp_path / "known-suffixes.rcz"
+    _write_suffix_probe_rcz(path, first)
+
+    log = DataLog()
+    log.from_rcz_log(str(path))
+
+    assert "unmapped channel suffixes" not in capsys.readouterr().out
+    assert "Ground Speed" in log.channels
+    assert "Chassis Yaw Rate" in log.channels
+
+
+def test_rcz_unknown_suffix_warns_without_changing_parse(tmp_path, capsys):
+    """A future suffix (e.g. 30008) prints WARNING; the rest is untouched."""
+    first = 1_700_000_000_000
+    n = 5
+    base_path = tmp_path / "base.rcz"
+    _write_suffix_probe_rcz(base_path, first)
+    base = DataLog()
+    base.from_rcz_log(str(base_path))
+    capsys.readouterr()
+
+    unknown_name = "channel_1_200_0_30008_0"
+    extended_path = tmp_path / "extended.rcz"
+    _write_suffix_probe_rcz(
+        extended_path, first,
+        extra={unknown_name: np.full(n, 1234, dtype="<i4").tobytes()},
+    )
+    extended = DataLog()
+    extended.from_rcz_log(str(extended_path))
+
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert unknown_name in out
+    assert "1_200" in out
+    assert set(extended.channels) == set(base.channels)
+    for name in base.channels:
+        np.testing.assert_array_equal(
+            extended.channels[name].timestamps, base.channels[name].timestamps,
+        )
+        np.testing.assert_array_equal(
+            extended.channels[name].values, base.channels[name].values,
+        )

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
+import re
 from typing import Any
 
 import numpy as np
@@ -68,6 +70,49 @@ _GPS_TS_KEYS = tuple(
     for device_type in ("300", "200", "100")
 )
 _OBD_DEV4_TS_KEY = "channel_4_101_0_1_1"
+
+# Known value/timestamp suffixes under the channel_1_/2_/3_ families,
+# derived from the existing probes in this module (not a second table):
+# clock+uptime (_resolve_rcz_clock/_validate_uptime_clocks: 1_1/2_1),
+# GPS (_populate_rcz_gps: 4_0/3_1/5_0/6_0),
+# GPS aux (_populate_rcz_gps_aux: 30002_0/30003_0/30007_0/46_0/30004_0/30005_0),
+# accel+gyro (_populate_rcz_imu/_populate_rcz_secondary_imu:
+# 9_0/10_0/11_0/12_0/13_0/14_0/1_1).
+# Device 8 (magnetometer 28/29/30), device 12/4 OBD and channel2_ value
+# files keep their own fallback/debug handling and are excluded here.
+_RCZ_KNOWN_123_SUFFIXES = frozenset({
+    "1_1", "2_1",
+    "3_1", "4_0", "5_0", "6_0",
+    "9_0", "10_0", "11_0", "12_0", "13_0", "14_0",
+    "46_0", "30002_0", "30003_0", "30004_0", "30005_0", "30007_0",
+})
+_RCZ_123_RE = re.compile(r"^channel_([123])_(\d+)_0_(.+)$")
+
+
+def _warn_rcz_unknown_suffixes(namelist):
+    """Print one WARNING for channel_1_/2_/3_ suffixes no probe consumes.
+
+    Metadata- and channel-neutral: the unknown files are only listed
+    (key + device) so future suffixes (e.g. a new 30008) never vanish
+    silently. Device 8/12/4 families are excluded (own handling).
+    """
+    unknowns = []
+    for name in sorted(namelist):
+        base = os.path.basename(name)
+        match = _RCZ_123_RE.match(base)
+        if match is None:
+            continue
+        suffix = match.group(3)
+        if suffix not in _RCZ_KNOWN_123_SUFFIXES:
+            unknowns.append((name, f"{match.group(1)}_{match.group(2)}"))
+    if unknowns:
+        details = ", ".join(
+            f"{key} (device {device})" for key, device in unknowns
+        )
+        print(
+            "WARNING: RCZ stint carries unmapped channel suffixes: "
+            f"{details}",
+        )
 
 
 def _decode_epoch_ms(data, reference_ms=None):
@@ -1308,6 +1353,8 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
         _populate_rcz_obd4(data_log, namelist, times_sec, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel)
 
         _validate_uptime_clocks(data_log, namelist, read_channel)
+
+        _warn_rcz_unknown_suffixes(namelist)
 
     # Fallback for Chassis Yaw Rate if missing
     derive_yaw_rate_from_gps_heading(data_log)
