@@ -176,6 +176,35 @@ def test_batch_direction_suffix(tmp_path):
     assert os.path.isfile(str(tmp_path / "b_gps_cw.ld"))
 
 
+def test_batch_output_dir_acti_writes_single_gps_name(tmp_path):
+    """Batch ACTI + --output-dir + --direction-suffix lands one file per input.
+
+    Regression test: the batch ``_gps`` stem composed with the ``_cw``/``_ccw``
+    suffix must yield exactly one .ld/.ldx pair per input in the output dir,
+    never a ``foo_cw`` twin next to ``foo_gps_cw``; a --force rerun keeps the
+    same file set instead of regrowing twins.
+    """
+    src_dir = tmp_path / "src"
+    out_dir = tmp_path / "out"
+    src_dir.mkdir()
+    out_dir.mkdir()
+    _write_synthetic_ld(str(src_dir / "a.ld"), clockwise=False)
+    _write_synthetic_ld(str(src_dir / "b.ld"), clockwise=True)
+    anchor = _write_anchor(str(tmp_path / "anchors.json"))
+    args = [
+        str(src_dir), "ACTI", "--track", "test_loop", "--anchor", anchor,
+        "--output-dir", str(out_dir), "--direction-suffix",
+    ]
+    result = _run_cli_in_process(args)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = ["a_gps_ccw.ld", "a_gps_ccw.ldx", "b_gps_cw.ld", "b_gps_cw.ldx"]
+    assert sorted(os.listdir(str(out_dir))) == expected
+    assert sorted(os.listdir(str(src_dir))) == ["a.ld", "b.ld"]
+    rerun = _run_cli_in_process([*args, "--force"])
+    assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    assert sorted(os.listdir(str(out_dir))) == expected
+
+
 def _ldx_detail(ldx_path, detail_id):
     root = ET.parse(ldx_path).getroot()
     for elem in root.iter("String"):
