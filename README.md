@@ -105,6 +105,30 @@ choose one with `--stint N`. Inspect does not resample channels or derive
 conversion channels. Malformed inputs still produce JSON with a stable error
 code and a nonzero exit status.
 
+Python callers can use the same conversion service as the CLI and batch workers:
+
+```python
+from track_telemetry_converter.conversion import ConversionOptions, ConversionRequest, convert
+
+result = convert(ConversionRequest(
+    source="session.rcz",
+    log_type="AUTO",
+    options=ConversionOptions(output="converted.ld", frequency="25"),
+))
+if result.status == "success":
+    print(result.output_paths)
+else:
+    print(result.error)
+```
+
+`convert` returns `success`, `skipped` for existing outputs, or `failed`, with
+structured errors, ordered messages, and the files actually written. It does
+not print progress or exit the process. Successful single-export results include
+a diagnostic summary and completed processing stages. RCZ session/stint fanout,
+output naming, `force`, and verified LD/LDX writes use the same path as the CLI.
+Requests and results can be passed between worker processes; VBO column selections
+use the raw `vbo_columns` string option.
+
 RaceChrono multi-session backups require an explicit selection:
 
 ```bash

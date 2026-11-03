@@ -67,3 +67,28 @@ def discover_rcz_sessions(rcz_path):
                     ),
                 )
     return sorted(sessions, key=lambda item: (item.time_created, item.prefix))
+
+
+
+def get_rcz_stints(rcz_path, target_session=None):
+    stints = set()
+    with zipfile.ZipFile(rcz_path, "r") as z:
+        namelist = z.namelist()
+        session_prefix = f"sessions/{target_session}/" if target_session else ""
+        session_key = session_prefix + "session.json"
+        if session_key in namelist:
+            session_json = json.loads(z.read(session_key).decode("utf-8"))
+            for lap in session_json.get("laps", []):
+                stints.add(lap.get("sessionResume", 0))
+        for name in namelist:
+            if name.startswith(session_prefix + "resume_"):
+                parts = name[len(session_prefix):].split("/")
+                if parts[0].startswith("resume_"):
+                    try:
+                        st_id = int(parts[0].replace("resume_", ""))
+                        stints.add(st_id)
+                    except ValueError:
+                        pass
+    if not stints:
+        stints.add(0)
+    return sorted(list(stints))

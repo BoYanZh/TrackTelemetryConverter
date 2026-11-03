@@ -9,10 +9,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from .diagnostics import build_diagnostic_report
+from .input_loading import detect_input_type, load_log_data
 from .log import DataLog
 from .output import ensure_output_targets
-from .parsers import SUPPORTED_LOG_TYPES, auto_detect_log_type
-from .rcz_archive import discover_rcz_sessions
+from .parsers import SUPPORTED_LOG_TYPES
+from .rcz_archive import discover_rcz_sessions, get_rcz_stints
 
 
 def _error_report(
@@ -62,11 +63,7 @@ def inspect_file(
         # Format sniffers and parsers historically write progress to stdout. Keep
         # that text out of the JSON interface and out of the diagnostic payload.
         with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink):
-            active_format = source_format
-            if active_format == "AUTO":
-                active_format = auto_detect_log_type(source)
-                if source.lower().endswith(".rcz"):
-                    active_format = "RCZ"
+            active_format = detect_input_type(source, source_format)
             if active_format not in SUPPORTED_LOG_TYPES:
                 return _error_report(
                     "INPUT_FORMAT_UNSUPPORTED",
@@ -122,8 +119,6 @@ def inspect_file(
                         stage="parse.session",
                     )
 
-                from .cli import get_rcz_stints
-
                 stints = get_rcz_stints(source, target_session=selected_session)
                 if len(stints) > 1 and str(stint).lower() == "all":
                     return _error_report(
@@ -164,13 +159,9 @@ def inspect_file(
                 gear_ratio_thresholds=None,
                 gearbox=None,
             )
-            from .cli import _extract_log_data
-
-            data_log = DataLog()
-            _extract_log_data(
+            data_log, _messages = load_log_data(
                 args,
                 active_format,
-                data_log,
                 str(stint),
                 selected_session,
             )
