@@ -47,6 +47,7 @@ def test_report_has_stable_schema_and_sorted_privacy_safe_channel_summaries():
         "frequency_hz": 2.0,
         "time_min_s": 0.0,
         "time_max_s": 1.0,
+        "usable_samples": {"count": 3, "first_time_s": 0.0, "last_time_s": 1.0},
         "invalid_fraction": 0.0,
         "time_invalid_fraction": 0.0,
         "gaps": {"count": 0, "max_s": None, "threshold_s": 1.0},
@@ -106,6 +107,7 @@ def test_nonfinite_timestamps_are_counted_and_excluded_from_time_statistics():
     assert channel["time_min_s"] == 0.0
     assert channel["time_max_s"] == 1.0
     assert channel["time_invalid_fraction"] == 0.5
+    assert channel["usable_samples"] == {"count": 2, "first_time_s": 0.0, "last_time_s": 1.0}
     assert channel["frequency_hz"] is None
     assert report["validation"]["valid"] is False
     assert {error["code"] for error in report["validation"]["errors"]} == {
@@ -125,6 +127,16 @@ def test_length_mismatch_and_empty_channels_are_invalid():
     by_name = {channel["name"]: channel for channel in report["channels"]}
     assert by_name["Mismatch"]["length_mismatch"] is True
     assert by_name["Empty"]["sample_count"] == 0
+    assert by_name["Mismatch"]["usable_samples"] == {
+        "count": 1,
+        "first_time_s": 0.0,
+        "last_time_s": 0.0,
+    }
+    assert by_name["Empty"]["usable_samples"] == {
+        "count": 0,
+        "first_time_s": None,
+        "last_time_s": None,
+    }
     assert report["validation"]["valid"] is False
     assert report["validation"]["errors"] == [
         {"code": "CHANNEL_EMPTY", "channel": "Empty"},
@@ -162,3 +174,19 @@ def test_extreme_finite_time_deltas_remain_strict_json_without_runtime_warnings(
     assert huge_channel["gaps"] == {"count": 1, "max_s": None, "threshold_s": 1.0}
     json.dumps(tiny_report, allow_nan=False)
     json.dumps(huge_report, allow_nan=False)
+
+
+def test_usable_sample_bounds_ignore_leading_trailing_nan_and_unpaired_tails():
+    log = _log_with_channel(
+        "Coverage",
+        [0.0, 1.0, 2.0, 3.0],
+        [float("nan"), 5.0, 6.0, float("nan"), 7.0],
+    )
+
+    report = build_diagnostic_report(log, source_format="RCZ")
+    channel = report["channels"][0]
+
+    assert channel["sample_count"] == 4
+    assert channel["length_mismatch"] is True
+    assert channel["usable_samples"] == {"count": 2, "first_time_s": 1.0, "last_time_s": 2.0}
+    json.dumps(report, allow_nan=False)
