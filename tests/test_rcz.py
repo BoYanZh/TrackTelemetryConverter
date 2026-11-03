@@ -18,6 +18,7 @@ from conftest import (
 )
 
 from track_telemetry_converter._vendor.ldparser import ldData
+from track_telemetry_converter.errors import TelemetryParseError
 from track_telemetry_converter.interpolation import _mask_interp_outside_range
 from track_telemetry_converter.log import DataLog
 from track_telemetry_converter.motec import MotecLog
@@ -47,7 +48,26 @@ def test_rcz_preserves_canonical_absolute_time_origin():
         assert log.rcz_metadata["timeOriginEpochMs"] == 1_700_000_000_000
 
 
-def test_rcz_rejects_non_epoch_gps_channel_2_as_timestamp(capsys):
+def test_rcz_missing_session_metadata_has_structured_error():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        source = os.path.join(tmp_dir, "missing_session.rcz")
+        with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("channel_1_300_0_1_1", np.array([1, 2], dtype="<i8").tobytes())
+
+        log = DataLog()
+        with pytest.raises(TelemetryParseError) as caught:
+            log.from_rcz_log(source)
+
+        error = caught.value.to_dict()
+        assert error["code"] == "RCZ_SESSION_MISSING"
+        assert error["stage"] == "parse.session"
+        assert error["source"] == source
+        assert error["details"]["expected_entry"] == "session.json"
+        assert log.channels == {}
+        assert log.time_origin_epoch_ms is None
+
+
+def test_rcz_rejects_non_epoch_gps_channel_2_as_timestamp():
     with tempfile.TemporaryDirectory() as tmp_dir:
         source = os.path.join(tmp_dir, "bad_timestamp.rcz")
         first = 1_700_000_000_000
@@ -63,11 +83,35 @@ def test_rcz_rejects_non_epoch_gps_channel_2_as_timestamp(capsys):
             archive.writestr("channel_1_300_0_2_1", not_epoch.tobytes())
 
         log = DataLog()
-        log.from_rcz_log(source)
+        with pytest.raises(TelemetryParseError) as caught:
+            log.from_rcz_log(source)
 
         assert log.channels == {}
         assert log.time_origin_epoch_ms is None
-        assert "Could not find timestamp channel" in capsys.readouterr().out
+        assert caught.value.code == "RCZ_TIMESTAMP_MISSING"
+        assert caught.value.stage == "parse.timebase"
+        assert caught.value.to_dict()["source"] == source
+
+
+def test_rcz_rejects_decreasing_sole_epoch_clock(tmp_path):
+    first = 1_700_000_000_000
+    timestamps = (first + np.array([0, 100, 50], dtype="<i8")).astype("<i8")
+    source = tmp_path / "decreasing-clock.rcz"
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "session.json",
+            json.dumps({"firstTimestamp": first, "timeCreated": first, "laps": []}),
+        )
+        archive.writestr("channel_1_300_0_1_1", timestamps.tobytes())
+
+    log = DataLog()
+    with pytest.raises(TelemetryParseError) as caught:
+        log.from_rcz_log(str(source))
+
+    assert caught.value.code == "RCZ_TIMESTAMP_MISSING"
+    assert caught.value.stage == "parse.timebase"
+    assert log.channels == {}
+    assert log.time_origin_epoch_ms is None
 
 
 def test_rcz_int64_device_timestamps_survive_low32_rollover():
@@ -173,9 +217,11 @@ def test_rcz_sensor_boundaries_use_per_sample_timestamps(tmp_path, mask_interp_g
     log.from_rcz_log(str(path), mask_interp_gaps=mask_interp_gaps)
     expected_times = gps_ms.astype(np.float64) / 1000.0
     assert log.time_origin_epoch_ms == first
-    for name in ("Ground Speed", "Engine RPM", "Gear", "CG Accel Lateral",
-                 "Chassis Yaw Rate", "Brake Pos"):
-        np.testing.assert_array_equal(log.channels[name].timestamps, expected_times)
+    assert {"Ground Speed", "Engine RPM", "Gear", "CG Accel Lateral", "Chassis Yaw Rate", "Brake Pos"} <= log.channels.keys()
+    for name, channel in log.channels.items():
+        np.testing.assert_array_equal(channel.timestamps, expected_times, err_msg=name)
+        assert len(channel.timestamps) == len(channel.values), name
+        assert np.all(np.diff(channel.timestamps) >= 0), name
 
     rpm = log.channels["Engine RPM"].values
     np.testing.assert_allclose(rpm, [np.nan, np.nan, 1000, 1909.090909, 3000,
@@ -191,6 +237,40 @@ def test_rcz_sensor_boundaries_use_per_sample_timestamps(tmp_path, mask_interp_g
     brake = log.channels["Brake Pos"].values
     np.testing.assert_allclose(brake, [np.nan, 10, 20, 24.545454545, 30,
                                        33, 40, np.nan], atol=1e-5)
+
+
+def test_rcz_masks_only_internal_sensor_gaps_over_one_second(tmp_path):
+    first = 1_700_000_000_000
+    gps_ms = np.arange(0, 3_001, 500, dtype="<i8")
+    sensor_ms = np.array([0, 500, 2500, 3000], dtype="<i8")
+    source = tmp_path / "sensor-gap.rcz"
+    session = {"firstTimestamp": first, "timeCreated": first, "laps": []}
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("session.json", json.dumps(session))
+        archive.writestr("channel_1_300_0_1_1", (first + gps_ms).tobytes())
+        archive.writestr(
+            "channel_1_300_0_4_0",
+            np.full(gps_ms.size, 10_000, dtype="<i4").tobytes(),
+        )
+        archive.writestr("channel_8_500_0_1_1", (first + sensor_ms).tobytes())
+        archive.writestr(
+            "channel_8_500_0_28_0",
+            np.array([10, 20, 30, 40], dtype="<i4").tobytes(),
+        )
+
+    unmasked = DataLog()
+    unmasked.from_rcz_log(str(source), mask_interp_gaps=False)
+    np.testing.assert_allclose(
+        unmasked.channels["Magnetic Field X"].values,
+        [10, 20, 22.5, 25, 27.5, 30, 40],
+    )
+
+    masked = DataLog()
+    masked.from_rcz_log(str(source), mask_interp_gaps=True)
+    np.testing.assert_allclose(
+        masked.channels["Magnetic Field X"].values,
+        [10, 20, np.nan, np.nan, np.nan, 30, 40],
+    )
 
 
 def test_rcz_maps_four_wheel_speed_pids(tmp_path):

@@ -3,7 +3,9 @@
 import os
 import shutil
 import tempfile
+import zipfile
 
+import pytest
 from conftest import EXAMPLES, _run_cli_in_process, _write_backup_rcz, _write_minimal_rcz
 
 
@@ -135,3 +137,72 @@ def test_batch_help_lists_whitelisted_extensions():
     help_text = build_parser().format_help()
     assert ".rcz" in help_text
     assert ".mp4" not in help_text
+
+
+def _write_root_multistint_rcz(path):
+    """Flatten the two-stint second session from the nested-backup fixture."""
+    backup = path.with_name("nested_backup_fixture.rcz")
+    _write_backup_rcz(backup)
+    session_prefix = "sessions/session_20260102_1100/"
+    with zipfile.ZipFile(backup, "r") as source:
+        entries = [
+            (item.filename[len(session_prefix):], source.read(item.filename))
+            for item in source.infolist()
+            if item.filename.startswith(session_prefix)
+        ]
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, contents in entries:
+            archive.writestr(name, contents)
+    backup.unlink()
+
+
+@pytest.mark.parametrize("jobs", [1, 2])
+def test_batch_backup_session_all_second_run_is_skipped(tmp_path, jobs):
+    _write_backup_rcz(tmp_path / "backup.rcz")
+
+    first = _run_cli_in_process(
+        [str(tmp_path), "AUTO", "--session", "all", "--jobs", str(jobs)],
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "1 converted, 0 skipped, 0 failed" in first.stdout
+
+    second = _run_cli_in_process(
+        [str(tmp_path), "AUTO", "--session", "all", "--jobs", str(jobs)],
+    )
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "0 converted, 1 skipped, 0 failed" in second.stdout
+
+
+@pytest.mark.parametrize("jobs", [1, 2])
+def test_batch_root_multistint_second_run_is_skipped(tmp_path, jobs):
+    source = tmp_path / "multi_stint.rcz"
+    _write_root_multistint_rcz(source)
+
+    first = _run_cli_in_process([str(tmp_path), "AUTO", "--jobs", str(jobs)])
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "1 converted, 0 skipped, 0 failed" in first.stdout
+    assert (tmp_path / "multi_stint_stint0.ld").is_file()
+    assert (tmp_path / "multi_stint_stint1.ld").is_file()
+
+    second = _run_cli_in_process([str(tmp_path), "AUTO", "--jobs", str(jobs)])
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "0 converted, 1 skipped, 0 failed" in second.stdout
+
+
+def test_batch_parallel_vbo_custom_channel_spec_is_picklable(tmp_path):
+    for stem in ("first", "second"):
+        _copy_fixture("racechrono_sample.csv", tmp_path / f"{stem}.csv")
+
+    result = _run_cli_in_process(
+        [
+            str(tmp_path), "AUTO", "--jobs", "2", "--vbo",
+            "--vbo-columns", "MyRPM=Engine RPM",
+        ],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 converted, 0 skipped, 0 failed" in result.stdout
+    for stem in ("first", "second"):
+        vbo = tmp_path / f"{stem}.vbo"
+        assert vbo.is_file()
+        assert "MyRPM" in vbo.read_text(encoding="utf-8")

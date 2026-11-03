@@ -41,6 +41,7 @@ from ..channels import (
     RCZ_PID_MAP,
 )
 from ..derived import derive_yaw_rate_from_gps_heading
+from ..errors import TelemetryParseError
 from ..interpolation import _interp_zoh, _mask_interp_gaps, _mask_interp_outside_range
 
 _PARTIAL_OUT_LAP_SPEED_KMH = 5.0
@@ -182,8 +183,13 @@ def _load_rcz_session(z, all_names, session_prefix):
     import json
     session_key = session_prefix + "session.json"
     if session_key not in all_names:
-        print("ERROR: Invalid RCZ file, missing session.json")
-        return
+        raise TelemetryParseError(
+            "Invalid RCZ file, missing session.json",
+            code="RCZ_SESSION_MISSING",
+            stage="parse.session",
+            source=z.filename,
+            details={"expected_entry": session_key},
+        )
 
     session_json = json.loads(z.read(session_key).decode("utf-8"))
     first_t = session_json.get("firstTimestamp", 0)
@@ -1314,8 +1320,12 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
             declared_gps=decl.get("gps"),
         )
         if not time_file or timestamps_ms is None:
-            print("ERROR: Could not find timestamp channel in RCZ file")
-            return
+            raise TelemetryParseError(
+                "Could not find timestamp channel in RCZ file",
+                code="RCZ_TIMESTAMP_MISSING",
+                stage="parse.timebase",
+                source=rcz_file_path,
+            )
 
         times_sec, n_samples, time_origin_epoch_ms = _init_rcz_timebase(data_log, timestamps_ms)
 
