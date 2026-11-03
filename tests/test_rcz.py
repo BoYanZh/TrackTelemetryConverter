@@ -48,6 +48,25 @@ def test_rcz_preserves_canonical_absolute_time_origin():
         assert log.rcz_metadata["timeOriginEpochMs"] == 1_700_000_000_000
 
 
+def test_rcz_missing_session_metadata_has_structured_error():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        source = os.path.join(tmp_dir, "missing_session.rcz")
+        with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("channel_1_300_0_1_1", np.array([1, 2], dtype="<i8").tobytes())
+
+        log = DataLog()
+        with pytest.raises(TelemetryParseError) as caught:
+            log.from_rcz_log(source)
+
+        error = caught.value.to_dict()
+        assert error["code"] == "RCZ_SESSION_MISSING"
+        assert error["stage"] == "parse.session"
+        assert error["source"] == source
+        assert error["details"]["expected_entry"] == "session.json"
+        assert log.channels == {}
+        assert log.time_origin_epoch_ms is None
+
+
 def test_rcz_rejects_non_epoch_gps_channel_2_as_timestamp():
     with tempfile.TemporaryDirectory() as tmp_dir:
         source = os.path.join(tmp_dir, "bad_timestamp.rcz")

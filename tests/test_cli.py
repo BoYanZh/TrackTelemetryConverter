@@ -1,10 +1,14 @@
 """Tests for CLI entrypoint, roundtrips, atomic writes, and file collision guards."""
 
+import json
 import os
 import tempfile
 import xml.etree.ElementTree as ET
+import zipfile
 from unittest.mock import patch
 
+import numpy as np
+import pytest
 from conftest import (
     EXAMPLES,
     _assert_cli_roundtrip,
@@ -63,6 +67,51 @@ def test_cli_ld_ldx_roundtrip_and_overwrite_guard():
         assert forced.returncode == 0, forced.stdout + forced.stderr
         parsed = ldData.fromfile(output)
         assert parsed.head.vehicleid == "Toyota GR86"
+
+
+@pytest.mark.parametrize(
+    ("archive_entries", "expected_message"),
+    [
+        (
+            [("channel_1_300_0_1_1", np.array([1, 2], dtype="<i8").tobytes())],
+            "missing session.json",
+        ),
+        (
+            [
+                (
+                    "session.json",
+                    json.dumps({"firstTimestamp": 1_700_000_000_000, "laps": []}),
+                ),
+                (
+                    "channel_1_300_0_2_1",
+                    np.array([0, 48, 105, 141, 176], dtype="<i8").tobytes(),
+                ),
+            ],
+            "Could not find timestamp channel",
+        ),
+    ],
+    ids=["missing-session", "missing-usable-timestamp"],
+)
+def test_cli_malformed_rcz_reports_error_without_output_or_source_changes(
+    tmp_path, archive_entries, expected_message,
+):
+    source = tmp_path / "malformed.rcz"
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, contents in archive_entries:
+            archive.writestr(name, contents)
+    source_before = _sha256(source)
+    output = tmp_path / "not_created" / "converted.ld"
+
+    result = _run_cli_in_process(
+        [str(source), "RCZ", "--output", str(output)],
+    )
+
+    assert result.returncode != 0
+    assert expected_message.lower() in (result.stdout + result.stderr).lower()
+    assert not output.parent.exists()
+    assert not output.exists()
+    assert not output.with_suffix(".ldx").exists()
+    assert _sha256(source) == source_before
 
 
 def test_cli_vbo_end_to_end():
