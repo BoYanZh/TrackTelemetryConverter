@@ -668,6 +668,10 @@ def build_parser():
                              "directory; name collisions follow the existing --force semantics)")
     parser.add_argument("--list-sessions", action="store_true",
                         help="List sessions in a RaceChrono backup without exporting")
+    parser.add_argument("--inspect", action="store_true",
+                        help="Print a privacy-safe JSON diagnostic report without converting")
+    parser.add_argument("--debug-report", type=str, default=None, metavar="PATH",
+                        help="Save the JSON report from --inspect; existing files require --force")
     parser.add_argument("--session", type=str,
                         help="RaceChrono backup session ID, or 'all'")
     parser.add_argument("--force", action="store_true",
@@ -763,6 +767,57 @@ def main(argv=None):
         args.output = os.path.expanduser(args.output)
     if args.output_dir:
         args.output_dir = os.path.expanduser(args.output_dir)
+
+    if args.debug_report and not args.inspect:
+        print("ERROR: --debug-report requires --inspect")
+        return 1
+    if args.inspect:
+        from .inspection import _error_report, inspect_file, write_debug_report
+
+        incompatible = (
+            args.output,
+            args.output_dir,
+            args.gpx,
+            args.kml,
+            args.csv,
+            args.vbo,
+            args.dlap,
+            args.list_sessions,
+        )
+        if any(incompatible):
+            report = _error_report(
+                "INSPECT_CONVERSION_OPTIONS_UNSUPPORTED",
+                "--inspect cannot be combined with conversion output options.",
+            )
+        else:
+            report = inspect_file(
+                args.log,
+                args.log_type,
+                session=args.session,
+                stint=args.stint,
+                lap=args.lap,
+                min_lap_sec=args.min_lap_sec,
+                mask_interp_gaps=args.mask_interp_gaps,
+                dbc=args.dbc,
+                track=args.track,
+                anchor=args.anchor,
+            )
+            if args.debug_report:
+                try:
+                    write_debug_report(
+                        report,
+                        args.debug_report,
+                        args.log,
+                        force=args.force,
+                    )
+                except (OSError, ValueError):
+                    report = _error_report(
+                        "DEBUG_REPORT_WRITE_FAILED",
+                        "Could not save the diagnostic report.",
+                        stage="inspect.output",
+                    )
+        print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+        return 0 if report.get("validation", {}).get("valid") else 1
     if args.log.lower().endswith(".rcz") and args.log_type != "RCZ":
         print(f"WARNING: Overriding --log_type '{args.log_type}' to 'RCZ' because input file has .rcz extension")
         args.log_type = "RCZ"

@@ -85,6 +85,26 @@ track-telemetry session.fit AUTO --csv --csv-wallclock
 track-telemetry session.rcz AUTO --g-source sensor --frequency 25
 ```
 
+Inspect a file without creating MoTeC outputs. The command writes a versioned,
+privacy-safe JSON report to stdout. It omits sample values, GPS coordinates,
+session metadata, and the input path. Use `--debug-report` to also save the
+same report; `--debug-report` requires `--inspect`, existing reports require
+`--force`, and the input cannot be used as the report path. Channel frequency
+uses the median positive timestamp interval. Gaps count intervals over one
+second. Validation rejects empty channels and nonfinite, duplicate, or
+decreasing timestamps; nonfinite values are reported as warnings.
+
+```bash
+track-telemetry session.rcz AUTO --inspect
+track-telemetry backup.rcz RCZ --inspect --session session_20260101_1000
+track-telemetry session.rcz RCZ --inspect --debug-report diagnostics.json
+```
+
+For RCZ backups, choose a session ID. If that session contains multiple stints,
+choose one with `--stint N`. Inspect does not resample channels or derive
+conversion channels. Malformed inputs still produce JSON with a stable error
+code and a nonzero exit status.
+
 RaceChrono multi-session backups require an explicit selection:
 
 ```bash
