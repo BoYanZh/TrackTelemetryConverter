@@ -18,6 +18,7 @@ from conftest import (
 )
 
 from track_telemetry_converter._vendor.ldparser import ldData
+from track_telemetry_converter.errors import TelemetryParseError
 from track_telemetry_converter.interpolation import _mask_interp_outside_range
 from track_telemetry_converter.log import DataLog
 from track_telemetry_converter.motec import MotecLog
@@ -47,7 +48,7 @@ def test_rcz_preserves_canonical_absolute_time_origin():
         assert log.rcz_metadata["timeOriginEpochMs"] == 1_700_000_000_000
 
 
-def test_rcz_rejects_non_epoch_gps_channel_2_as_timestamp(capsys):
+def test_rcz_rejects_non_epoch_gps_channel_2_as_timestamp():
     with tempfile.TemporaryDirectory() as tmp_dir:
         source = os.path.join(tmp_dir, "bad_timestamp.rcz")
         first = 1_700_000_000_000
@@ -63,11 +64,14 @@ def test_rcz_rejects_non_epoch_gps_channel_2_as_timestamp(capsys):
             archive.writestr("channel_1_300_0_2_1", not_epoch.tobytes())
 
         log = DataLog()
-        log.from_rcz_log(source)
+        with pytest.raises(TelemetryParseError) as caught:
+            log.from_rcz_log(source)
 
         assert log.channels == {}
         assert log.time_origin_epoch_ms is None
-        assert "Could not find timestamp channel" in capsys.readouterr().out
+        assert caught.value.code == "RCZ_TIMESTAMP_MISSING"
+        assert caught.value.stage == "parse.timebase"
+        assert caught.value.to_dict()["source"] == source
 
 
 def test_rcz_int64_device_timestamps_survive_low32_rollover():
