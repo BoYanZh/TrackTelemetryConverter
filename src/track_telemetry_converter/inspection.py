@@ -57,6 +57,7 @@ def inspect_file(
     source_format = str(source_format).upper()
     active_format = "UNKNOWN"
     selected_session = session
+    requested_lap = None
     try:
         # Format sniffers and parsers historically write progress to stdout. Keep
         # that text out of the JSON interface and out of the diagnostic payload.
@@ -75,6 +76,24 @@ def inspect_file(
                 )
 
             if active_format == "RCZ":
+                if lap is not None and str(lap).lower() != "all":
+                    try:
+                        requested_lap = int(lap)
+                    except (TypeError, ValueError):
+                        return _error_report(
+                            "RCZ_LAP_SELECTION_INVALID",
+                            "Choose a numeric RCZ lap number or 'all'.",
+                            source_format=active_format,
+                            stage="parse.selection",
+                        )
+                    if requested_lap <= 0:
+                        return _error_report(
+                            "RCZ_LAP_SELECTION_INVALID",
+                            "RCZ lap numbers must be positive integers.",
+                            source_format=active_format,
+                            stage="parse.selection",
+                        )
+
                 backup_sessions = discover_rcz_sessions(source)
                 if backup_sessions:
                     if not session or str(session).lower() == "all":
@@ -180,6 +199,20 @@ def inspect_file(
         return _error_report(
             code, message, source_format=active_format, stage=stage,
         )
+
+    if requested_lap is not None:
+        available_laps = {
+            int(item["lap_num"])
+            for item in data_log.laps_info.get("laps", [])
+            if item.get("lap_num") is not None
+        }
+        if requested_lap not in available_laps:
+            return _error_report(
+                "RCZ_LAP_UNKNOWN",
+                "The selected RCZ lap does not exist in the selected stint.",
+                source_format=active_format,
+                stage="parse.selection",
+            )
 
     return build_diagnostic_report(
         data_log,

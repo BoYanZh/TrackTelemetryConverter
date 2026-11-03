@@ -7,7 +7,12 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from conftest import _run_cli_in_process, _write_backup_rcz, _write_minimal_rcz
+from conftest import (
+    _run_cli_in_process,
+    _write_backup_rcz,
+    _write_lapped_rcz,
+    _write_minimal_rcz,
+)
 
 from track_telemetry_converter.inspection import inspect_file
 
@@ -196,3 +201,23 @@ def test_inspect_backup_requires_explicit_session_and_stint():
             "stint": 0,
             "lap": "all",
         }
+
+
+def test_inspect_rcz_rejects_unknown_and_malformed_lap_selections():
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "lapped.rcz"
+        _write_lapped_rcz(source)
+
+        valid = inspect_file(str(source), "RCZ", lap=2)
+        assert valid["validation"]["valid"]
+        assert valid["selection"]["lap"] == 2
+
+        unknown = inspect_file(str(source), "RCZ", lap=999)
+        assert "RCZ_LAP_UNKNOWN" in _codes(unknown)
+        assert unknown["validation"]["errors"][0]["stage"] == "parse.selection"
+
+        malformed = inspect_file(str(source), "RCZ", lap="lap-two")
+        assert "RCZ_LAP_SELECTION_INVALID" in _codes(malformed)
+
+        nonpositive = inspect_file(str(source), "RCZ", lap=0)
+        assert "RCZ_LAP_SELECTION_INVALID" in _codes(nonpositive)
