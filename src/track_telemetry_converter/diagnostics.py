@@ -18,6 +18,10 @@ def _channel_diagnostics(channel: Any) -> tuple[dict[str, Any], list[dict[str, s
     finite_times = np.isfinite(timestamps)
     finite_values = np.isfinite(values)
     valid_times = timestamps[finite_times]
+    paired_count = min(timestamps.size, values.size)
+    paired_times = timestamps[:paired_count]
+    paired_values = values[:paired_count]
+    usable_times = paired_times[np.isfinite(paired_times) & np.isfinite(paired_values)]
 
     # Finite endpoints can still have an unrepresentably large delta, while
     # tiny positive deltas can overflow when converted to frequency below.
@@ -71,6 +75,11 @@ def _channel_diagnostics(channel: Any) -> tuple[dict[str, Any], list[dict[str, s
         "frequency_hz": frequency_hz,
         "time_min_s": float(np.min(valid_times)) if valid_times.size else None,
         "time_max_s": float(np.max(valid_times)) if valid_times.size else None,
+        "usable_samples": {
+            "count": int(usable_times.size),
+            "first_time_s": float(np.min(usable_times)) if usable_times.size else None,
+            "last_time_s": float(np.max(usable_times)) if usable_times.size else None,
+        },
         "invalid_fraction": float(invalid_value_count / values.size) if values.size else 0.0,
         "time_invalid_fraction": float(time_invalid_count / sample_count) if sample_count else 0.0,
         "gaps": {

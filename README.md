@@ -101,9 +101,16 @@ track-telemetry session.rcz RCZ --inspect --debug-report diagnostics.json
 ```
 
 For RCZ backups, choose a session ID. If that session contains multiple stints,
-choose one with `--stint N`. Inspect does not resample channels or derive
-conversion channels. Malformed inputs still produce JSON with a stable error
-code and a nonzero exit status.
+choose one with `--stint N`. Each channel's `usable_samples` counts aligned
+time/value pairs where both fields are finite and reports the minimum and
+maximum usable times. When array lengths differ, only overlapping indices can
+form pairs. Inspect does not resample channels or derive conversion channels.
+Malformed inputs still produce JSON with a stable error code and a nonzero exit
+status.
+
+`frequency_hz` describes the parsed timestamp cadence. Some RCZ channels may
+already share the GPS time grid, so this value does not necessarily describe a
+sensor's native sampling rate.
 
 Python callers can use the same conversion service as the CLI and batch workers:
 
