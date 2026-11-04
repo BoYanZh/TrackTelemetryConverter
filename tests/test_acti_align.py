@@ -15,7 +15,7 @@ def _loop(n=400, radius=300.0):
     return np.column_stack([radius * np.cos(t), radius * np.sin(t)])
 
 
-def _write_synthetic_ld(path, with_car_coord=True, laps=2, freq=20.0):
+def _write_synthetic_ld(path, with_car_coord=True, laps=2, freq=20.0, with_lap_time=True):
     """Minimal ACTI-shaped .ld: circular trajectory + speed + Lap Time sawtooth."""
     n_lap = 400
     n = n_lap * laps
@@ -29,8 +29,9 @@ def _write_synthetic_ld(path, with_car_coord=True, laps=2, freq=20.0):
         log.channels["Car Coord Y"].set_samples(t, xy[:, 1])
     log.add_channel("Ground Speed", "km/h", float, 2)
     log.channels["Ground Speed"].set_samples(t, np.full(n, 100.0))
-    log.add_channel("Lap Time", "s", float, 3)
-    log.channels["Lap Time"].set_samples(t, np.tile(np.linspace(0, n_lap / freq, n_lap), laps))
+    if with_lap_time:
+        log.add_channel("Lap Time", "s", float, 3)
+        log.channels["Lap Time"].set_samples(t, np.tile(np.linspace(0, n_lap / freq, n_lap), laps))
     log.add_channel("Throttle Pos", "%", float, 1)
     log.channels["Throttle Pos"].set_samples(t, np.full(n, 100.0))
     ml = MotecLog()
@@ -142,6 +143,52 @@ def test_parse_acti_log_end_to_end(tmp_path):
     lats = log.channels["GPS Latitude"].values
     assert np.ptp(lats) > 0
     np.testing.assert_allclose(np.median(lats), 39.0, atol=0.01)
+
+
+def test_parse_acti_log_short_first_group_is_out_lap(tmp_path):
+    """A mid-lap recording start still opens with an Out Lap, never Partial."""
+    src = str(tmp_path / "acti.ld")
+    freq = 20.0
+    n_short, n_lap = 100, 400  # 5 s partial + one 20 s lap
+    n = n_short + n_lap
+    t = np.arange(n) / freq
+    xy = _loop(n)
+    log = DataLog()
+    log.add_channel("Car Coord X", "m", float, 3)
+    log.channels["Car Coord X"].set_samples(t, xy[:, 0])
+    log.add_channel("Car Coord Y", "m", float, 3)
+    log.channels["Car Coord Y"].set_samples(t, xy[:, 1])
+    log.add_channel("Ground Speed", "km/h", float, 2)
+    log.channels["Ground Speed"].set_samples(t, np.full(n, 100.0))
+    log.add_channel("Lap Time", "s", float, 3)
+    log.channels["Lap Time"].set_samples(
+        t, np.concatenate([np.linspace(0, 5.0, n_short), np.linspace(0, 20.0, n_lap)]),
+    )
+    ml = MotecLog()
+    ml.initialize()
+    ml.add_all_channels(log)
+    ml.write(src)
+
+    out = DataLog()
+    out.from_acti_log(src, track="test_loop", anchors=_anchors())
+    laps = out.laps_info["laps"]
+    assert [lap["type"] for lap in laps] == ["Out Lap", "In Lap"]
+    assert laps[0]["lap_num"] == 1
+
+
+def test_parse_acti_log_without_lap_time_is_single_out_lap(tmp_path):
+    """No Lap Time structure: the whole log is one Out Lap, never empty."""
+    src = str(tmp_path / "acti.ld")
+    _write_synthetic_ld(src, with_lap_time=False)
+    out = DataLog()
+    out.from_acti_log(src, track="test_loop", anchors=_anchors())
+    assert out.laps_info["total_laps"] == 1
+    lap = out.laps_info["laps"][0]
+    assert lap["type"] == "Out Lap"
+    assert lap["start_time"] == 0.0
+    assert lap["duration"] > 0.0
+    assert "Lap Number" in out.channels
+    np.testing.assert_allclose(out.channels["Lap Number"].values, np.ones(800))
 
 
 def test_parse_acti_log_rejects_unknown_track(tmp_path):

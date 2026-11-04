@@ -441,14 +441,22 @@ def calibrate_track(rw_ld_path, acti_ld_path, track_key, track_name=None):
 
 
 def _build_laps_info(groups, freq):
-    """laps_info from Lap Time groups: edges partial, interior timed (>=15 s)."""
+    """laps_info from Lap Time groups: first row is always the Out Lap.
+
+    The opening group is the run from recording start (pits or mid-lap)
+    to the first start/finish crossing -- never a timed lap -- so it is
+    typed "Out Lap" unconditionally. Interior full-length groups are
+    timed (>=15 s), the trailing group is the In Lap; short fragments of
+    either edge stay "Partial" except the opener, guaranteeing the export
+    always carries exactly one Out Lap ahead of lap 1.
+    """
     laps = []
     beacons = []
     for k, (dur, s, e) in enumerate(groups):
         start_s = s / freq
         end_s = e / freq
         if k == 0:
-            kind = "Out Lap" if dur > 15.0 else "Partial"
+            kind = "Out Lap"
         elif k == len(groups) - 1:
             kind = "In Lap" if dur > 15.0 else "Partial"
         else:
@@ -602,6 +610,12 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         lap_ids[t_gps >= (groups[-1][1] / fx)] = len(groups)
         data_log.add_channel(CH_LAP_NUMBER, "", int, 0)
         data_log.channels[CH_LAP_NUMBER].set_samples(t_gps, lap_ids)
+    elif len(t_gps):
+        # No Lap Time structure at all (missing channel or no recorded
+        # reset): the whole log is the out lap, so the export still
+        # carries exactly one Out Lap instead of an empty lap list.
+        data_log.add_channel(CH_LAP_NUMBER, "", int, 0)
+        data_log.channels[CH_LAP_NUMBER].set_samples(t_gps, np.ones(len(t_gps)))
 
     data_log.metadata["venue_name"] = cfg.get("name", "")
     data_log.metadata["driver"] = getattr(ld.head, "driver", "")
@@ -615,5 +629,25 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
             data_log.datetime_utc = head_dt.astimezone(datetime.timezone.utc)
 
     groups = _all_lap_bounds(ld)
-    laps_info = _build_laps_info(groups, fx) if groups else {"laps": [], "total_laps": 0}
+    if groups:
+        laps_info = _build_laps_info(groups, fx)
+    else:
+        duration = data_log.duration()
+        laps_info = {
+            "laps": [
+                {
+                    "lap_num": 1,
+                    "lap_label": "1",
+                    "start_time": 0.0,
+                    "end_time": duration,
+                    "duration": duration,
+                    "type": "Out Lap",
+                    "stint": 0,
+                },
+            ],
+            "total_laps": 1,
+            "fastest_lap": 1,
+            "fastest_time": 0.0,
+            "beacons": [],
+        }
     data_log.laps_info = _filter_acti_lap(data_log, laps_info, target_lap)
