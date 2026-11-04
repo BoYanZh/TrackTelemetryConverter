@@ -12,6 +12,9 @@ dist/
 /tmp
 /data
 
+# Local-only helper scripts (e.g. profile editor, watchers, batch runners)
+/scripts/
+
 # Coverage data
 .coverage
 coverage.xml
