@@ -92,16 +92,14 @@ def _replace_with_retry(staged, target, attempts=5, delay=0.2):
     far shorter than a human-held i2 lock. Retries ride out the transient
     case; a genuinely held file still fails after the last attempt.
     """
-    last_exc = None
-    for _ in range(attempts):
+    for attempt in range(attempts):
         try:
             os.replace(staged, target)
             return
-        except PermissionError as exc:
-            last_exc = exc
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
             time.sleep(delay)
-    assert last_exc is not None
-    raise last_exc
 
 
 def _commit_files(pairs):
