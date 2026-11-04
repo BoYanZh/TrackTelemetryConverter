@@ -460,6 +460,10 @@ class DataLog:
         from .parsers.acti_parser import parse_acti_log
         parse_acti_log(self, acti_file_path, target_lap=target_lap, track=track, anchors=anchors)
 
+    def from_motec_ld_log(self, ld_file_path, target_lap=None, min_lap_sec=15.0):
+        from .parsers.motec_ld_parser import parse_motec_ld_log
+        parse_motec_ld_log(self, ld_file_path, target_lap=target_lap, min_lap_sec=min_lap_sec)
+
     def from_fit_log(self, fit_file_path, target_lap=None):
         from .parsers.fit_parser import parse_fit_log
         parse_fit_log(self, fit_file_path, target_lap=target_lap)

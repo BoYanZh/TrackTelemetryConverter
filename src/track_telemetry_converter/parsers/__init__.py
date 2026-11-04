@@ -26,6 +26,7 @@ SUPPORTED_LOG_TYPES = (
     "XRK",
     "FIT",
     "ACTI",
+    "MOTEC_LD",
 )
 
 #: Convertible input extensions for CLI batch (AUTO) mode. Anything else
@@ -90,6 +91,8 @@ def auto_detect_log_type(file_path: str) -> str:
         return "DLAP"
     if path_lower.endswith(".ld") and _sniff_ld_for_acti(file_path):
         return "ACTI"
+    if path_lower.endswith(".ld"):
+        return "MOTEC_LD"
     try:
         with open(file_path, encoding="utf-8", errors="ignore") as f:
             sample = f.read(2048)

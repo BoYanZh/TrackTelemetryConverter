@@ -130,7 +130,7 @@ def build_parser():
                         help="Type of log to process (use AUTO with a directory to detect each file's format; "
                              "AUTO only converts {} and skips anything else)".format(
                                  ", ".join(sorted(SUPPORTED_INPUT_EXTENSIONS))),
-                        choices=["CAN", "CSV", "ACCESSPORT", "RACECHRONO", "RCZ", "PBBUDDY", "TRACKADDICT", "TESLA", "VBO", "DLAP", "IBT", "XRK", "FIT", "ACTI", "AUTO"])
+                        choices=["CAN", "CSV", "ACCESSPORT", "RACECHRONO", "RCZ", "PBBUDDY", "TRACKADDICT", "TESLA", "VBO", "DLAP", "IBT", "XRK", "FIT", "ACTI", "MOTEC_LD", "AUTO"])
     parser.add_argument("--recursive", action="store_true",
                         help="Recurse into subdirectories in batch directory mode")
     parser.add_argument("--exclude-dir", action="append", default=None, metavar="NAME",

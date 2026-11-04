@@ -42,6 +42,7 @@ _PATH_LOG_READERS = {
     "XRK": ("Extracting AIM XRK/XRZ telemetry...", "from_xrk_log", True),
     "DLAP": ("Extracting Dragy DLAP data...", "from_dlap_log", True),
     "IBT": ("Extracting iRacing .ibt telemetry...", "from_ibt_log", False),
+    "MOTEC_LD": ("Extracting MoTeC LD telemetry...", "from_motec_ld_log", True),
 }
 
 

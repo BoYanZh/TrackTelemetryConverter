@@ -9,6 +9,7 @@ Supported inputs:
 
 - iRacing `.ibt`
 - Assetto Corsa ACTI `.ld` (Car Coord X/Y placed by track profile; `--track` selects, `--anchor` adds custom profiles)
+- real-world MoTeC `.ld` logger files (explicit `MOTEC_LD`, or single-file `AUTO`; ACTI sim `.ld` stays on the ACTI path)
 - RaceChrono `.rcz` and CSV
 - AIM `.xrk` / `.xrz`
 - Garmin `.fit`
@@ -72,8 +73,10 @@ python -m track_telemetry_converter session.rcz AUTO
 ```
 
 `AUTO` detects IBT, RCZ, XRK/XRZ, FIT, VBO, DLAP, Tesla, TrackAddict, PB Buddy, AIM/RaceStudio/RaceRender CSV,
-Accessport CSV, and generic CSV inputs. Explicit choices are `CAN`, `CSV`,
-`ACCESSPORT`, `RACECHRONO`, `RCZ`, `PBBUDDY`, `TRACKADDICT`, `TESLA`, `VBO`, `DLAP`, `IBT`, `XRK`, and `FIT`.
+Accessport CSV, generic CSV, and MoTeC LD inputs (single-file mode; directory
+batch skips `.ld` so the converter never re-ingests its own outputs).
+Explicit choices are `CAN`, `CSV`,
+`ACCESSPORT`, `RACECHRONO`, `RCZ`, `PBBUDDY`, `TRACKADDICT`, `TESLA`, `VBO`, `DLAP`, `IBT`, `XRK`, `FIT`, `ACTI`, and `MOTEC_LD`.
 
 Common options:
 
@@ -157,7 +160,10 @@ track-telemetry data/ AUTO --recursive --force
 ```
 
 `AUTO` detects RCZ, IBT, XRK/XRZ, FIT, VBO, DLAP, and CSV dialects for each file,
-so mixed inputs convert in one run. Outputs are written next to each input and
+so mixed inputs convert in one run. `.ld` files are skipped in directory mode
+(they are the converter's own outputs, except ACTI sim logs handled by an
+explicit ACTI batch); convert a real-world `.ld` with single-file
+`MOTEC_LD` or single-file `AUTO`. Outputs are written next to each input and
 existing outputs are skipped unless `--force` is given. Add `--recursive` to
 include subdirectories. RaceChrono backup archives are skipped with a notice
 unless `--session all` is passed, in which case each archive expands under its
