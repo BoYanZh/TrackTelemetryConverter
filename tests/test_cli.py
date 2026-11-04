@@ -165,20 +165,39 @@ def test_atomic_output_verification_failure_preserves_existing_files():
         real_replace = os.replace
         replace_calls = 0
 
-        def fail_second_replace(source, target):
+        def fail_second_replace_once(source, target):
             nonlocal replace_calls
             replace_calls += 1
             if replace_calls == 2:
                 raise PermissionError("second target locked")
             return real_replace(source, target)
 
-        with patch("track_telemetry_converter.output.os.replace", side_effect=fail_second_replace):
+        # A transient lock is retried, not fatal: the pair still commits.
+        with patch("track_telemetry_converter.output.os.replace", side_effect=fail_second_replace_once):
+            atomic_write_motec_pair(motec, log, ld_path, ldx_path)
+        assert replace_calls == 3
+        with open(ld_path, "rb") as output:
+            assert output.read() != b"old ld"
+        with open(ldx_path, "rb") as output:
+            assert output.read() != b"old ldx"
+        assert not [name for name in os.listdir(tmp_dir) if name.startswith(".motec_")]
+
+        def fail_all_replaces(source, target):
+            raise PermissionError("second target locked")
+
+        # A persistently locked target still aborts the pair commit,
+        # restoring the previous outputs.
+        with open(ld_path, "wb") as output:
+            output.write(b"old ld")
+        with open(ldx_path, "wb") as output:
+            output.write(b"old ldx")
+        with patch("track_telemetry_converter.output.os.replace", side_effect=fail_all_replaces):
             try:
                 atomic_write_motec_pair(motec, log, ld_path, ldx_path)
             except PermissionError as exc:
                 assert "second target locked" in str(exc)
             else:
-                raise AssertionError("second replace failure must abort the pair commit")
+                raise AssertionError("persistent replace failure must abort the pair commit")
 
         with open(ld_path, "rb") as output:
             assert output.read() == b"old ld"

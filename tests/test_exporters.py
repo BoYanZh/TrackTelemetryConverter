@@ -164,6 +164,51 @@ def test_gpx_export_requires_gps():
     assert not write_kml(MotecLog(), "unused.kml", log)
 
 
+def test_commit_files_retries_transient_lock(tmp_path, monkeypatch):
+    """A momentarily locked target (twin workers, AV/indexer) is retried."""
+    import track_telemetry_converter.output as out_mod
+
+    staged = tmp_path / "a.tmp"
+    target = tmp_path / "a.ld"
+    staged.write_bytes(b"data")
+    calls = {"n": 0}
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(13, "sharing violation")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    monkeypatch.setattr(out_mod.time, "sleep", lambda _: None)
+    out_mod._commit_files(((str(staged), str(target)),))
+    assert target.read_bytes() == b"data"
+    assert calls["n"] == 3
+
+
+def test_commit_files_persistent_lock_still_fails(tmp_path, monkeypatch):
+    """A genuinely held file still raises after retries are exhausted."""
+    import track_telemetry_converter.output as out_mod
+
+    staged = tmp_path / "a.tmp"
+    target = tmp_path / "a.ld"
+    staged.write_bytes(b"data")
+
+    def always_locked(src, dst):
+        raise PermissionError(13, "sharing violation")
+
+    monkeypatch.setattr(os, "replace", always_locked)
+    monkeypatch.setattr(out_mod.time, "sleep", lambda _: None)
+    try:
+        out_mod._commit_files(((str(staged), str(target)),))
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("expected PermissionError for a held target")
+    assert not os.path.exists(str(target))
+
+
 def test_cli_export_flags_end_to_end():
     source = os.path.join(EXAMPLES, "vbo_sample.vbo")
     for flag, ext, marker in (

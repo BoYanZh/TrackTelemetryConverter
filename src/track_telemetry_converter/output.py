@@ -6,6 +6,7 @@ import math
 import os
 import shutil
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -82,6 +83,27 @@ def _temporary_path(target, suffix):
     return path
 
 
+def _replace_with_retry(staged, target, attempts=5, delay=0.2):
+    """os.replace with short retries on transient lock failures.
+
+    Parallel batch workers can commit the same outputs (e.g. a .xrk/.xrz
+    twin pair shares one basename), and antivirus/indexers briefly lock
+    fresh files on Windows -- both surface as PermissionError in a window
+    far shorter than a human-held i2 lock. Retries ride out the transient
+    case; a genuinely held file still fails after the last attempt.
+    """
+    last_exc = None
+    for _ in range(attempts):
+        try:
+            os.replace(staged, target)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _commit_files(pairs):
     """Replace verified files and restore previous targets if a replace fails."""
     backups = {}
@@ -94,7 +116,7 @@ def _commit_files(pairs):
                 backups[target] = backup
 
         for staged, target in pairs:
-            os.replace(staged, target)
+            _replace_with_retry(staged, target)
             committed.append(target)
     except Exception:
         for target in reversed(committed):
