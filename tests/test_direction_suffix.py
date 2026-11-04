@@ -206,6 +206,35 @@ def test_batch_output_dir_acti_writes_single_gps_name(tmp_path):
     assert sorted(os.listdir(str(out_dir))) == expected
 
 
+def test_direction_suffix_rerun_skips_before_parse(tmp_path):
+    """A --direction-suffix rerun skips on existing outputs without parsing.
+
+    Direction is content-derived, so a complete _cw/_ccw set from a previous
+    run means the file was already converted: the rerun must report skips
+    and never reach the parse stage (no "Parsed" lines, outputs untouched).
+    """
+    src_dir = tmp_path / "src"
+    out_dir = tmp_path / "out"
+    src_dir.mkdir()
+    out_dir.mkdir()
+    _write_synthetic_ld(str(src_dir / "a.ld"), clockwise=False)
+    _write_synthetic_ld(str(src_dir / "b.ld"), clockwise=True)
+    anchor = _write_anchor(str(tmp_path / "anchors.json"))
+    args = [
+        str(src_dir), "ACTI", "--track", "test_loop", "--anchor", anchor,
+        "--output-dir", str(out_dir), "--direction-suffix",
+    ]
+    first = _run_cli_in_process(args)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "Parsed" in first.stdout
+    mtimes = {p: os.path.getmtime(str(out_dir / p)) for p in os.listdir(str(out_dir))}
+    rerun = _run_cli_in_process(args)
+    assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    assert "2 skipped" in rerun.stdout
+    assert "Parsed" not in rerun.stdout
+    assert {p: os.path.getmtime(str(out_dir / p)) for p in os.listdir(str(out_dir))} == mtimes
+
+
 def _ldx_detail(ldx_path, detail_id):
     root = ET.parse(ldx_path).getroot()
     for elem in root.iter("String"):

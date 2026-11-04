@@ -84,6 +84,65 @@ def _direction_suffix_applies(active_type, data_log):
     return bool(getattr(data_log, "metadata", {}).get("acti_bidirectional", False))
 
 
+def _direction_suffix_candidate_sets(args, out_base, ld_filename, output_targets):
+    """Both _cw/_ccw output sets, or None when the suffix won't apply.
+
+    Mirrors ``_maybe_apply_direction_suffix`` naming (minus its guard/print
+    side effects) so the incremental path can skip before parsing: direction
+    is content-derived, so a complete previous set means this exact file was
+    already converted.
+    """
+    if not getattr(args, "direction_suffix", False):
+        return None
+    if out_base is None and getattr(args, "output", None) \
+            and not getattr(args, "_batch_mode", False):
+        return None  # explicit --output keeps the user filename (suffix ignored)
+    stem, _ext = os.path.splitext(ld_filename)
+    if stem.endswith("_cw") or stem.endswith("_ccw"):
+        return None
+    return [
+        [
+            (f"{stem}_{direction}" + target[len(stem):])
+            if target.startswith(stem) else target
+            for target in output_targets
+        ]
+        for direction in ("cw", "ccw")
+    ]
+
+
+def _raise_if_direction_outputs_exist(args, out_base, ld_filename, output_targets):
+    """Skip-before-parse for --direction-suffix reruns.
+
+    The existing guard only sees the unsuffixed names, so reruns fully parse
+    every file just to discover the suffixed outputs already exist. When a
+    complete _cw or _ccw set from a previous run is present, raise the same
+    FileExistsError the post-parse guard would raise (the caller maps it to
+    a skip). The plain (unsuffixed) guard is deferred to post-parse when
+    --direction-suffix uses default naming, so directionless files (no GPS
+    heading: suffix never applies) re-parse every rerun. A complete
+    unsuffixed set means the file already converted exactly as a rerun
+    would. Caveat: the single transitional run that first ENABLES
+    --direction-suffix needs --force, otherwise files that only have
+    legacy unsuffixed outputs keep them instead of gaining _cw/_ccw twins.
+    """
+    if getattr(args, "force", False):
+        return
+    candidate_sets = _direction_suffix_candidate_sets(
+        args, out_base, ld_filename, output_targets,
+    )
+    if not candidate_sets:
+        return
+    for candidates in candidate_sets:
+        if candidates and all(os.path.exists(path) for path in candidates):
+            raise FileExistsError(
+                f"output already exists: {candidates[0]}; pass --force to replace it",
+            )
+    if output_targets and all(os.path.exists(path) for path in output_targets):
+        raise FileExistsError(
+            f"output already exists: {output_targets[0]}; pass --force to replace it",
+        )
+
+
 def _detect_track_direction(data_log):
     """Classify loop direction from the log's GPS Heading channel.
 
@@ -450,6 +509,11 @@ def _convert_one(
                 force=getattr(args, "force", False),
                 source_path=args.log,
             )
+        if getattr(args, "direction_suffix", False):
+            # Skip-before-parse: a complete _cw/_ccw (or plain) set from a
+            # previous run means this exact file was already converted; the
+            # post-parse guard would only discover that after full parsing.
+            _raise_if_direction_outputs_exist(args, out_base, ld_filename, output_targets)
 
         data_log, parse_messages = load_log_data(args, active_type, stint_arg, target_session)
         messages.extend(parse_messages)
