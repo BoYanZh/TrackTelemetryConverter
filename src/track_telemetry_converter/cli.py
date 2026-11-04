@@ -133,6 +133,11 @@ def build_parser():
                         choices=["CAN", "CSV", "ACCESSPORT", "RACECHRONO", "RCZ", "PBBUDDY", "TRACKADDICT", "TESLA", "VBO", "DLAP", "IBT", "XRK", "FIT", "ACTI", "AUTO"])
     parser.add_argument("--recursive", action="store_true",
                         help="Recurse into subdirectories in batch directory mode")
+    parser.add_argument("--exclude-dir", action="append", default=None, metavar="NAME",
+                        help="Skip subdirectories with this name during batch directory mode "
+                             "(repeatable; e.g. --exclude-dir ignore keeps data/ignore/ "
+                             "out of recursive AUTO scans; the scan root itself is "
+                             "always processed)")
     parser.add_argument("--jobs", "-j", type=int, default=1,
                         help="Parallel workers for batch directory mode (default: 1 keeps serial order; "
                              "on Windows a good value is usually the CPU core count)")
@@ -395,23 +400,42 @@ def _batch_validate_dir_args(args):
     return None
 
 
-def _batch_collect_files(dir_path, wanted, recursive):
+def _batch_collect_files(dir_path, wanted, recursive, exclude_dirs=()):
     """Gather batch inputs; None (after printing an error) when empty.
 
     Returns ``(candidates, files)`` where ``candidates`` is every file
     under the directory and ``files`` the sorted convertible subset.
+    Subdirectories whose name matches ``exclude_dirs`` are pruned first,
+    so quarantined files (e.g. under data/ignore/) never surface -- not
+    even as skips. The scan root itself is always processed.
     """
+    excluded_names = {os.path.normcase(name) for name in (exclude_dirs or ()) if os.path.sep not in name and "/" not in name}
+    excluded_paths = {
+        os.path.normcase(os.path.abspath(name)) + os.sep
+        for name in (exclude_dirs or ())
+        if os.path.sep in name or "/" in name
+    }
+
+    def _excluded(path):
+        rel = os.path.normcase(os.path.relpath(path, dir_path)).split(os.sep)
+        if any(part in excluded_names for part in rel[:-1]):
+            return True
+        abs_norm = os.path.normcase(os.path.abspath(path))
+        return any(abs_norm.startswith(prefix) for prefix in excluded_paths)
+
     if recursive:
         candidates = [
             os.path.join(root, name)
             for root, _, names in os.walk(dir_path)
             for name in names
+            if not _excluded(os.path.join(root, name))
         ]
     else:
         candidates = [
             os.path.join(dir_path, name)
             for name in os.listdir(dir_path)
             if os.path.isfile(os.path.join(dir_path, name))
+            and not _excluded(os.path.join(dir_path, name))
         ]
     files = sorted(path for path in candidates if path.lower().endswith(wanted))
     if not files:
@@ -513,7 +537,8 @@ def _batch_convert(args):
         wanted = _BATCH_AUTO_EXTENSIONS
     else:
         wanted = _BATCH_TYPE_EXTENSIONS.get(args.log_type, ())
-    gathered = _batch_collect_files(dir_path, wanted, getattr(args, "recursive", False))
+    gathered = _batch_collect_files(dir_path, wanted, getattr(args, "recursive", False),
+                                      getattr(args, "exclude_dir", None))
     if gathered is None:
         return 1
     candidates, files = gathered

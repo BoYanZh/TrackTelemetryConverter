@@ -100,6 +100,21 @@ def test_batch_empty_directory_errors():
         assert "No convertible logs" in result.stdout
 
 
+def test_batch_exclude_dir_skips_ignored_subtree():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ignored = os.path.join(tmp_dir, "ignore")
+        os.mkdir(ignored)
+        _copy_fixture("racechrono_sample.csv", os.path.join(tmp_dir, "a.csv"))
+        _copy_fixture("racechrono_sample.csv", os.path.join(ignored, "b.csv"))
+
+        result = _run_cli_in_process([tmp_dir, "AUTO", "--recursive", "--exclude-dir", "ignore"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "1 converted, 0 skipped, 0 failed" in result.stdout
+        assert os.path.isfile(os.path.join(tmp_dir, "a.ld"))
+        assert not os.path.exists(os.path.join(ignored, "b.ld"))
+        assert "ignore" not in result.stdout
+
+
 def test_auto_whitelist_matches_shared_constant():
     from track_telemetry_converter.cli import _BATCH_AUTO_EXTENSIONS
     from track_telemetry_converter.parsers import SUPPORTED_INPUT_EXTENSIONS
