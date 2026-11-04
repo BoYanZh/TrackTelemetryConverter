@@ -35,7 +35,8 @@ from ..channels import (
 
 EARTH_RADIUS_M = 6371000.0
 
-#: Shipped track profiles. ``scale`` is unity for every calibrated track;
+#: Shipped track profiles. ``scale`` is near unity (within 0.5%, enforced by
+#: ``test_shipped_profiles_have_scale_near_unity``) for every shipped track;
 #: calibration refuses to save anything that deviates more than 5%.
 #: ``bidirectional`` marks tracks that are actually run in both directions
 #: (thunderhill_west, buttonwillow): only those ever take the opt-in
@@ -66,9 +67,9 @@ ACTI_TRACK_PROFILES = {
         "ref_lat": 39.536232,
         "ref_lon": -122.339561,
         "theta_deg": 180.259,
-        "scale": 1.0001,
-        "dx_m": 640.518,
-        "dy_m": 479.391,
+        "scale": 1.001,
+        "dx_m": 641.107,
+        "dy_m": 481.77,
         "rmse_error_m": 4.41,
         "bidirectional": True,
     },
@@ -359,21 +360,95 @@ def _best_lap_bounds(ld):
     return s, e, dur
 
 
+def _official_lap_durations(last, n, edges, freq):
+    """Game-official durations for complete laps, keyed by group index.
+
+    The game latches each completed lap's time into Last Lap Time at the
+    reset, so the value observed during group k+1 belongs to lap k. Exact
+    to the ms (e.g. 116.867); sample-grid interpolation instead jitters
+    within the 1/300 s timer quantum, and downstream renderers (i2 1.0)
+    jitter the same way, so no interpolation can reproduce them at 0 ms.
+    Use the official value when sane (finite, positive, within 2 s of the
+    interpolated duration); otherwise leave the group on interpolation.
+    """
+    official = {}
+    if last is None or len(last) != n:
+        return official
+    for k in range(1, len(edges) - 2):
+        seg = np.asarray(last[edges[k + 1]:edges[k + 2]], dtype=float)
+        seg = seg[np.isfinite(seg)]
+        if seg.size == 0:
+            continue
+        cand = float(np.median(seg))
+        interp = (edges[k + 1] - edges[k]) / freq
+        if cand > 0.0 and abs(cand - interp) <= 2.0:
+            official[k] = cand
+    return official
+
+
 def _all_lap_bounds(ld, min_lap_sec=15.0):
-    """Every Lap Time group as (duration, start, end); used for laps_info."""
+    """Every Lap Time group as (groups, resets).
+
+    ``groups`` is a list of (duration, start, end, t_start, t_end).
+    Completed laps take the game's official duration from Last Lap Time
+    (see ``_official_lap_durations``); partial edge laps (out/in) and files
+    without that channel use reset-crossing interpolation: the Lap Time
+    channel is the game's running timer, but the reset falls between two
+    20 Hz samples, so ``(e - s) / freq`` is only accurate to the 0.05 s
+    sample grid. The true crossing sits ``lt[e]`` seconds before sample
+    ``e`` (time elapsed since the reset) and ``lt[s]`` seconds after sample
+    ``s``, hence ``duration = (e - s) / freq - post + pre``. The first group
+    started before recording (pre = 0: the Out Lap counts from log start)
+    and a trailing group has no post sample (post = 0: the In Lap counts to
+    file end). Non-timer-looking edge values fall back to the grid duration.
+
+    ``resets`` holds the start/finish crossing times (one per observed Lap
+    Time reset), accumulated from the final durations so beacon diffs always
+    equal the displayed lap durations. Only true crossings become Beacons:
+    log start (mid-lap) and file end (truncated lap) are not crossings, so
+    emitting markers there makes i2 render a phantom zero-length lap and
+    shifts every lap number by one.
+
+    Completed laps preferably use the game's own official time latched in
+    Last Lap Time (exact to the ms); sample interpolation only jitters
+    within the 1/300 s timer quantum and can never reproduce a downstream
+    renderer's own jitter at 0 ms.
+    """
     lt, freq = _channel_data(ld, "Lap Time")
     if lt is None or len(lt) < 100:
-        return []
+        return [], []
+    last, _ = _channel_data(ld, "Last Lap Time")
     edges = [0]
     for i in range(1, len(lt)):
         if lt[i] < lt[i - 1] - 1.0:
             edges.append(i)
     edges.append(len(lt))
     if len(edges) <= 2:
-        return []
-    return [
-        ((edges[k + 1] - edges[k]) / freq, edges[k], edges[k + 1]) for k in range(len(edges) - 1)
-    ]
+        return [], []
+    n = len(lt)
+    official = _official_lap_durations(last, n, edges, freq)
+    bounds = []
+    resets = []
+    cum = 0.0
+    for k in range(len(edges) - 1):
+        s, e = edges[k], edges[k + 1]
+        grid = (e - s) / freq
+        post = float(lt[e]) if e < n and np.isfinite(lt[e]) else 0.0
+        pre = float(lt[s]) if s > 0 and np.isfinite(lt[s]) else 0.0
+        if not (0.0 <= post <= 5.0 and 0.0 <= pre <= 5.0):
+            dur = grid
+        else:
+            t_start_meas = (s / freq - pre) if s > 0 else 0.0
+            t_end_meas = (e / freq - post) if e < n else e / freq
+            dur = t_end_meas - t_start_meas
+            if k in official:
+                dur = official[k]
+        t_start, t_end = cum, cum + dur
+        bounds.append((dur, s, e, t_start, t_end))
+        cum = t_end
+        if e < n:
+            resets.append(cum)
+    return bounds, resets
 
 
 def _gps_to_local_m(lat, lon):
@@ -447,21 +522,31 @@ def calibrate_track(rw_ld_path, acti_ld_path, track_key, track_name=None):
     }
 
 
-def _build_laps_info(groups, freq):
+def _build_laps_info(groups, freq, resets=None):
     """laps_info from Lap Time groups: first row is always the Out Lap.
 
     The opening group is the run from recording start (pits or mid-lap)
     to the first start/finish crossing -- never a timed lap -- so it is
     typed "Out Lap" unconditionally. Interior full-length groups are
     timed (>=15 s), the trailing group is the In Lap; short fragments of
-    either edge stay "Partial" except the opener, guaranteeing the export
-    always carries exactly one Out Lap ahead of lap 1.
+    the trailing edge stay "Partial", guaranteeing the export always
+    carries exactly one Out Lap ahead of lap 1.
+
+    Group tuples carry interpolated (duration, start, end, t_start, t_end).
+    ``resets`` holds the interpolated start/finish crossing times; only
+    those become Beacons (falling back to group boundaries when resets is
+    None, e.g. legacy callers). Log start (mid-lap) and file end
+    (truncated lap) are not crossings, so beaconing them makes i2 render a
+    phantom zero-length lap and shifts every lap number by one.
     """
     laps = []
-    beacons = []
-    for k, (dur, s, e) in enumerate(groups):
-        start_s = s / freq
-        end_s = e / freq
+    for k, item in enumerate(groups):
+        dur, s, e = item[0], item[1], item[2]
+        if len(item) >= 5:
+            start_s, end_s = float(item[3]), float(item[4])
+        else:
+            start_s = s / freq
+            end_s = e / freq
         if k == 0:
             kind = "Out Lap"
         elif k == len(groups) - 1:
@@ -479,9 +564,20 @@ def _build_laps_info(groups, freq):
                 "stint": 0,
             },
         )
-        for boundary in (start_s, end_s):
-            if not any(abs(boundary - b[0]) <= 1e-6 for b in beacons):
-                beacons.append((boundary, "Start/Finish"))
+    if resets is None:
+        beacons = []
+        for k, item in enumerate(groups):
+            dur, s, e = item[0], item[1], item[2]
+            if len(item) >= 5:
+                start_s, end_s = float(item[3]), float(item[4])
+            else:
+                start_s = s / freq
+                end_s = e / freq
+            for boundary in (start_s, end_s):
+                if not any(abs(boundary - b[0]) <= 1e-6 for b in beacons):
+                    beacons.append((boundary, "Start/Finish"))
+    else:
+        beacons = [(float(t), "Start/Finish") for t in resets]
     timed = [lap for lap in laps if lap["type"] == "Timed"]
     return {
         "laps": laps,
@@ -599,6 +695,38 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         vals = np.asarray(src.data, dtype=float)
         data_log.channels[out_name].set_samples(np.arange(len(vals)) / fch, vals)
 
+    # Preserve every other source channel under its original name, unless
+    # that name is already taken by a mapped / synthesised channel above.
+    # Mapped raw names are skipped even when the canonical rename differs,
+    # so a renamed channel never appears twice.
+    for src in ld.channs:
+        name = getattr(src, "name", "")
+        if not name:
+            continue
+        if name in data_log.channels:
+            continue
+        if name in _ACTI_CHANNEL_MAP:
+            continue
+        try:
+            vals = np.asarray(src.data, dtype=float)
+        except (TypeError, ValueError):
+            continue
+        if vals.size == 0:
+            continue
+        fch = float(src.freq) if getattr(src, "freq", 0) and src.freq > 0 else 20.0
+        try:
+            kind = np.dtype(src.dtype).kind if getattr(src, "dtype", None) is not None else "f"
+        except TypeError:
+            kind = "f"
+        data_type = float if kind in ("f", "c") else int
+        try:
+            dec = int(getattr(src, "dec", 0) or 0)
+        except (TypeError, ValueError):
+            dec = 0
+        unit = getattr(src, "unit", "") or ""
+        data_log.add_channel(name, unit, data_type, dec)
+        data_log.channels[name].set_samples(np.arange(len(vals)) / fch, vals)
+
     data_log.add_channel(CH_GPS_LATITUDE, "deg", float, 7)
     data_log.channels[CH_GPS_LATITUDE].set_samples(t_gps, lat)
     data_log.add_channel(CH_GPS_LONGITUDE, "deg", float, 7)
@@ -606,15 +734,17 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
     data_log.add_channel(CH_GPS_HEADING, "deg", float, 3)
     data_log.channels[CH_GPS_HEADING].set_samples(t_gps, np.asarray(heading, dtype=float))
 
-    groups = _all_lap_bounds(ld)
+    groups, _ = _all_lap_bounds(ld)
     if groups:
         lap_ids = np.zeros(len(t_gps))
-        for k, (_dur, s, e) in enumerate(groups):
-            # Group edges index the Lap Time grid; map onto the GPS clock.
-            t0 = s / fx
-            t1 = e / fx
+        for k, item in enumerate(groups):
+            # Group edges index the Lap Time grid; map the interpolated
+            # reset crossings onto the GPS clock.
+            t0 = float(item[3]) if len(item) >= 5 else item[1] / fx
+            t1 = float(item[4]) if len(item) >= 5 else item[2] / fx
             lap_ids[(t_gps >= t0) & (t_gps < t1)] = k + 1
-        lap_ids[t_gps >= (groups[-1][1] / fx)] = len(groups)
+        last_t1 = float(groups[-1][4]) if len(groups[-1]) >= 5 else groups[-1][1] / fx
+        lap_ids[t_gps >= last_t1] = len(groups)
         data_log.add_channel(CH_LAP_NUMBER, "", int, 0)
         data_log.channels[CH_LAP_NUMBER].set_samples(t_gps, lap_ids)
     elif len(t_gps):
@@ -631,6 +761,12 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
     # bidirectional tracks take --direction-suffix _cw/_ccw names.
     data_log.metadata["acti_track"] = key
     data_log.metadata["acti_bidirectional"] = bool(cfg.get("bidirectional", False))
+    # The ACTI app stores tyre info in the header short comment
+    # (e.g. "Tires: Street (ST)"); carry it over so i2 still shows it.
+    # An explicit --short_comment always wins in _build_motec_log.
+    head_short = getattr(ld.head, "short_comment", "")
+    if head_short:
+        data_log.metadata["short_comment"] = head_short
     head_dt = getattr(ld.head, "datetime", None)
     if isinstance(head_dt, datetime.datetime):
         data_log.datetime = head_dt
@@ -639,9 +775,9 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         else:
             data_log.datetime_utc = head_dt.astimezone(datetime.timezone.utc)
 
-    groups = _all_lap_bounds(ld)
+    groups, resets = _all_lap_bounds(ld)
     if groups:
-        laps_info = _build_laps_info(groups, fx)
+        laps_info = _build_laps_info(groups, fx, resets)
     else:
         duration = data_log.duration()
         laps_info = {

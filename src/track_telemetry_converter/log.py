@@ -196,13 +196,13 @@ class DataLog:
             return []
 
         spd_m = self.channels.get(CH_GROUND_SPEED)
-        spd_vals = np.array([m.value for m in spd_m.messages]) if spd_m else None
+        spd_vals = np.ascontiguousarray(spd_m.values, dtype=np.float64) if spd_m else None
         hdg_m = self.channels.get(CH_GPS_HEADING)
-        hdg_vals = np.array([m.value for m in hdg_m.messages]) if hdg_m else None
+        hdg_vals = np.ascontiguousarray(hdg_m.values, dtype=np.float64) if hdg_m else None
 
-        lat = np.array([m.value for m in lat_m])
-        lon = np.array([m.value for m in lon_m])
-        times = np.array([m.timestamp for m in lat_m])
+        lat = np.ascontiguousarray(self.channels[CH_GPS_LATITUDE].values, dtype=np.float64)
+        lon = np.ascontiguousarray(self.channels[CH_GPS_LONGITUDE].values, dtype=np.float64)
+        times = np.ascontiguousarray(self.channels[CH_GPS_LATITUDE].timestamps, dtype=np.float64)
         dur = self.duration()
 
         beacons = []
@@ -217,21 +217,21 @@ class DataLog:
             d_lon = (lon - t_lon) * 85670.0
             dist = np.sqrt(d_lat**2 + d_lon**2)
 
-            cand_indices = []
-            for i in range(1, len(dist) - 1):
-                if dist[i] > 25.0:
-                    continue
-                if spd_vals is not None and spd_vals[i] < min_speed_kmh:
-                    continue
-                if times[i] < min_time_sec or (dur > 0 and (dur - times[i]) < 5.0):
-                    continue
-                if t_hdg is not None and hdg_vals is not None:
-                    ang_diff = np.abs((hdg_vals[i] - t_hdg + 180) % 360 - 180)
-                    if ang_diff > 35.0:
-                        continue
-
-                if dist[i] <= dist[i - 1] and dist[i] <= dist[i + 1]:
-                    cand_indices.append(i)
+            # Vectorized local-minima gate: identical to the legacy per-sample
+            # loop (dist <= 25 m, speed/time/heading gates, <= neighbours).
+            inner = dist[1:-1]
+            mask = (inner <= dist[:-2]) & (inner <= dist[2:])
+            mask &= inner <= 25.0
+            t_inner = times[1:-1]
+            mask &= t_inner >= min_time_sec
+            if dur > 0:
+                mask &= (dur - t_inner) >= 5.0
+            if spd_vals is not None:
+                mask &= spd_vals[1:-1] >= min_speed_kmh
+            if t_hdg is not None and hdg_vals is not None:
+                ang_diff = np.abs((hdg_vals[1:-1] - t_hdg + 180) % 360 - 180)
+                mask &= ang_diff <= 35.0
+            cand_indices = (np.nonzero(mask)[0] + 1).tolist()
 
             last_t = -999.0
             for idx in cand_indices:

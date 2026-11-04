@@ -4,6 +4,31 @@ Extracted from the original DataLog.csv_log methods with identical behavior."""
 
 from __future__ import annotations
 
+import numpy as np
+
+#: Rows per chunk in the vectorized data pass. Bounds the transient
+#: split-string table (~rows x columns Python strings) while keeping
+#: numpy conversions large enough to amortize call overhead.
+_CSV_CHUNK_ROWS = 20_000
+
+
+def _max_text_decimals(cells):
+    """Max decimals over the raw cell texts (legacy ``split(".")`` semantics).
+
+    ``"2.50"`` -> 2, ``"3"`` -> 0, ``"1.5e-3"`` -> 4: everything after the
+    last ``"."`` counts, exactly like the legacy per-cell scan. ``cells``
+    is a unicode numpy array (already built for the float conversion).
+    """
+    if len(cells) == 0:
+        return 0
+    parts = np.char.rpartition(cells, ".")
+    sep = parts[:, 1]
+    tail = parts[:, 2]
+    has_dot = sep == "."
+    if not np.any(has_dot):
+        return 0
+    return int(np.char.str_len(tail[has_dot]).max())
+
 
 def parse_csv_log(data_log, log_lines):
     """ Creates channels populated with messages from a CSV log file.
@@ -45,7 +70,8 @@ def parse_csv_log(data_log, log_lines):
         kept_names.append(name)
     channel_names = kept_names
 
-    # We'll keep a map of names and column numbers for easy channel lookups when parsing rows
+    # We'll keep a map of names and column numbers for easy channel lookups when parsing rows.
+    # A duplicate header keeps the LAST column (dict overwrite), matching legacy behavior.
     i = 0
     channel_dict = {}
     for name in channel_names:
@@ -54,40 +80,62 @@ def parse_csv_log(data_log, log_lines):
         channel_dict[name] = i
         i += 1
 
-    chan_buffers = {name: ([], []) for name in channel_names}
+    # 2. Vectorized data pass over chunks (C-speed float conversion per
+    # column). Outcomes match the legacy row loop exactly: rows with a
+    # non-numeric time are skipped; a column with any non-numeric cell is
+    # dropped entirely (with one WARNING); decimals are the max over the
+    # raw cell texts of the kept rows.
+    columns = list(channel_dict.items())
+    n_cols = len(columns)
+    alive = [True] * n_cols
+    col_parts = [[] for _ in range(n_cols)]
+    ts_parts = []
+    decimals = [0] * n_cols
+    total_rows = len(log_lines)
 
-    # Go through each line grabbing all the channel values
-    for line in log_lines[data_header_idx + 1:]:
-        line = line.strip("\n")
-        values = line.split(",")
+    for start in range(data_header_idx + 1, total_rows, _CSV_CHUNK_ROWS):
+        chunk = log_lines[start:start + _CSV_CHUNK_ROWS]
+        table = [row.strip("\n").split(",") for row in chunk]
 
-        # Timestamp is the first element
-        try:
-            t = float(values[0])
-        except ValueError:
-            continue
-
-        invalid_channels = []
-        for name, i in channel_dict.items():
+        keep = []
+        ts_vals = []
+        for k, row in enumerate(table):
             try:
-                val = float(values[i + 1])
-                ts_buf, val_buf = chan_buffers[name]
-                ts_buf.append(t)
-                val_buf.append(val)
+                ts_vals.append(float(row[0]))
+            except ValueError:
+                continue
+            keep.append(k)
+        if not keep:
+            continue
+        ts_parts.append(np.asarray(ts_vals, dtype=np.float64))
 
-                val_text_split = values[i + 1].split(".")
-                decimals_present = 0 if len(val_text_split) == 1 else len(val_text_split[1])
-                data_log.channels[name].decimals = max(decimals_present, data_log.channels[name].decimals)
+        for pos, (name, col) in enumerate(columns):
+            if not alive[pos]:
+                continue
+            # Short rows raise IndexError here, as legacy `values[i + 1]` did.
+            str_arr = np.asarray([table[k][col + 1] for k in keep])
+            try:
+                arr = str_arr.astype(np.float64)
             except ValueError:
                 print(f"WARNING: Found non numeric values for channel {name}, removing channel")
-                invalid_channels.append(name)
+                alive[pos] = False
+                col_parts[pos] = []
+                continue
+            col_parts[pos].append(arr)
+            chunk_dec = _max_text_decimals(str_arr)
+            if chunk_dec > decimals[pos]:
+                decimals[pos] = chunk_dec
 
-        for name in invalid_channels:
-            del channel_dict[name]
-            del data_log.channels[name]
-            if name in chan_buffers:
-                del chan_buffers[name]
-
-    for name, (ts_buf, val_buf) in chan_buffers.items():
-        if ts_buf and name in data_log.channels:
-            data_log.channels[name].set_samples(ts_buf, val_buf)
+    for pos, (name, _col) in enumerate(columns):
+        if not alive[pos]:
+            # Dropped on the first non-numeric cell, buffered values discarded.
+            if name in data_log.channels:
+                del data_log.channels[name]
+            continue
+        if ts_parts and col_parts[pos]:
+            data_log.channels[name].set_samples(
+                np.concatenate(ts_parts), np.concatenate(col_parts[pos]),
+            )
+            if decimals[pos] > data_log.channels[name].decimals:
+                data_log.channels[name].decimals = decimals[pos]
+        # No samples: the empty channel stays, exactly like the legacy loop.

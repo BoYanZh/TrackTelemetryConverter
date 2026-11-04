@@ -186,7 +186,11 @@ def build_parser():
                              "and ' CW'/' CCW' to the venue (from GPS-heading winding; "
                              "ACTI only for bidirectional profiles such as thunderhill_west; "
                              "default filenames only, explicit --output/--venue_name "
-                             "keep their values)")
+                             "keep their values). For ACTI input the suffix only applies "
+                             "to bidirectional track profiles (thunderhill_west, "
+                             "buttonwillow_1a_ccw, or custom anchors with "
+                             "\"bidirectional\": true); single-direction tracks such as "
+                             "sonoma keep plain names")
 
     parser.add_argument("--lap", type=str, default="all",
                         help="Reconstructed lap number within the selected stint, or 'all' (default: all)")
@@ -448,6 +452,8 @@ def _batch_prepare_file(args, fpath, expand_backups, output_dir, skipped, failed
         except Exception as exc:
             failed.append(fpath)
             return (file_args, detected, f"ERROR: Failed to inspect RCZ archive: {exc}")
+        # Stash for the worker: single zip open per file (see _convert_single_input).
+        file_args._rcz_sessions = backup_sessions
         if backup_sessions:
             if not expand_backups:
                 skipped.append((fpath, "backup archive (use --session all)"))
@@ -595,28 +601,34 @@ def _convert_single_input(args):
         print(f"ERROR: log file {args.log} does not exist")
         return 1
 
-    if args.log_type == "RCZ" and args.list_sessions:
-        try:
-            backup_sessions = discover_rcz_sessions(args.log)
-        except (OSError, ValueError, zipfile.BadZipFile) as exc:
-            print(f"ERROR: Failed to inspect RCZ archive: {exc}")
-            return 1
-        if not backup_sessions:
-            print("This RCZ contains one root session; --list-sessions is for backup archives.")
+    if args.log_type == "RCZ":
+        cached = getattr(args, "_rcz_sessions", None)
+        if cached is None:
+            try:
+                cached = discover_rcz_sessions(args.log)
+            except (OSError, ValueError, zipfile.BadZipFile) as exc:
+                print(f"ERROR: Failed to inspect RCZ archive: {exc}")
+                return 1
+        # Share with process_one_file/_fanout so the archive is opened once.
+        args._rcz_sessions = cached
+        backup_sessions = cached
+        if args.list_sessions:
+            if not backup_sessions:
+                print("This RCZ contains one root session; --list-sessions is for backup archives.")
+                return 0
+            print(f"Found {len(backup_sessions)} sessions:")
+            print("Session ID\tTrack\tDuration\tLaps\tStints")
+            for session in backup_sessions:
+                print(
+                    "{}\t{}\t{:.1f}s\t{}\t{}".format(
+                        session.session_id,
+                        session.track_name,
+                        session.duration_sec,
+                        session.lap_count,
+                        ",".join(str(value) for value in session.stints),
+                    ),
+                )
             return 0
-        print(f"Found {len(backup_sessions)} sessions:")
-        print("Session ID\tTrack\tDuration\tLaps\tStints")
-        for session in backup_sessions:
-            print(
-                "{}\t{}\t{:.1f}s\t{}\t{}".format(
-                    session.session_id,
-                    session.track_name,
-                    session.duration_sec,
-                    session.lap_count,
-                    ",".join(str(value) for value in session.stints),
-                ),
-            )
-        return 0
 
     result = convert_request(ConversionRequest.from_namespace(args))
     for message in result.messages:

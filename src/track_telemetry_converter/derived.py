@@ -19,7 +19,6 @@ from .channels import (
     CH_THROTTLE_POS,
     CH_YAW_RATE,
 )
-from .models import Message
 
 DEFAULT_GEAR_RATIO_THRESHOLDS_MT = (100.0, 64.0, 47.0, 38.0, 30.0, 20.0)
 DEFAULT_GEAR_RATIO_THRESHOLDS_AT = (90.0, 57.0, 40.0, 28.0, 21.0, 15.0)
@@ -138,20 +137,20 @@ def derive_smoothed_accel(data_log, window_sec=0.5):
                                   (CH_CG_ACCEL_LON, CH_CG_ACCEL_LON_SMOOTH)]:
         if raw_name in data_log.channels and smooth_name not in data_log.channels:
             ch = data_log.channels[raw_name]
-            if len(ch.messages) < 5:
+            if len(ch.timestamps) < 5:
                 continue
             freq = ch.avg_frequency()
             w = max(1, int(window_sec * freq))
-            vals = np.array([m.value for m in ch.messages], dtype=np.float64)
+            vals = np.ascontiguousarray(ch.values, dtype=np.float64)
 
             padded = np.pad(vals, (w // 2, w - 1 - w // 2), mode="edge")
             windows = np.lib.stride_tricks.sliding_window_view(padded, w)
             smoothed = np.mean(windows, axis=1)[:len(vals)]
 
             data_log.add_channel(smooth_name, ch.units, float, ch.decimals)
-            data_log.channels[smooth_name].messages = [
-                Message(ch.messages[i].timestamp, float(smoothed[i])) for i in range(len(vals))
-            ]
+            data_log.channels[smooth_name].set_samples(
+                np.ascontiguousarray(ch.timestamps, dtype=np.float64), smoothed,
+            )
 
 
 def derive_cg_accel_lateral(data_log, force=False):
@@ -161,15 +160,16 @@ def derive_cg_accel_lateral(data_log, force=False):
         return
     spd_chan = data_log.channels[CH_GROUND_SPEED]
     yaw_chan = data_log.channels[CH_YAW_RATE]
-    n = len(spd_chan.messages)
+    n = len(spd_chan.timestamps)
     if n < 1:
         return
-    t_arr = np.array([m.timestamp for m in spd_chan.messages])
-    vx_ms = np.array([m.value / 3.6 if spd_chan.units == "km/h" else m.value for m in spd_chan.messages])
-    yr_rad = np.radians([m.value for m in yaw_chan.messages])
+    t_arr = np.ascontiguousarray(spd_chan.timestamps, dtype=np.float64)
+    spd_vals = np.ascontiguousarray(spd_chan.values, dtype=np.float64)
+    vx_ms = spd_vals / 3.6 if spd_chan.units == "km/h" else spd_vals
+    yr_rad = np.radians(np.ascontiguousarray(yaw_chan.values, dtype=np.float64))
     ay = (vx_ms * yr_rad) / 9.80665
     data_log.add_channel(CH_CG_ACCEL_LAT, "G", float, 2)
-    data_log.channels[CH_CG_ACCEL_LAT].messages = [Message(t_arr[i], ay[i]) for i in range(n)]
+    data_log.channels[CH_CG_ACCEL_LAT].set_samples(t_arr, ay)
 
 
 def derive_cg_accel_longitudinal(data_log, force=False):
@@ -178,46 +178,47 @@ def derive_cg_accel_longitudinal(data_log, force=False):
     if CH_GROUND_SPEED not in data_log.channels:
         return
     spd_chan = data_log.channels[CH_GROUND_SPEED]
-    n = len(spd_chan.messages)
+    n = len(spd_chan.timestamps)
     if n < 2:
         return
-    t_arr = np.array([m.timestamp for m in spd_chan.messages])
-    vx_ms = np.array([m.value / 3.6 if spd_chan.units == "km/h" else m.value for m in spd_chan.messages])
+    t_arr = np.ascontiguousarray(spd_chan.timestamps, dtype=np.float64)
+    spd_vals = np.ascontiguousarray(spd_chan.values, dtype=np.float64)
+    vx_ms = spd_vals / 3.6 if spd_chan.units == "km/h" else spd_vals
     ax = np.gradient(vx_ms, t_arr) / 9.80665
     data_log.add_channel(CH_CG_ACCEL_LON, "G", float, 2)
-    data_log.channels[CH_CG_ACCEL_LON].messages = [Message(t_arr[i], ax[i]) for i in range(n)]
+    data_log.channels[CH_CG_ACCEL_LON].set_samples(t_arr, ax)
 
 
 def calculate_g_sum(data_log):
     if CH_CG_ACCEL_LON not in data_log.channels or CH_CG_ACCEL_LAT not in data_log.channels:
         return
-    ax_msgs = data_log.channels[CH_CG_ACCEL_LON].messages
-    ay_msgs = data_log.channels[CH_CG_ACCEL_LAT].messages
-    n = min(len(ax_msgs), len(ay_msgs))
+    lon_chan = data_log.channels[CH_CG_ACCEL_LON]
+    lat_chan = data_log.channels[CH_CG_ACCEL_LAT]
+    n = min(len(lon_chan.timestamps), len(lat_chan.timestamps))
     if n < 2:
         return
-    time_g = [ax_msgs[i].timestamp for i in range(n)]
-    ax = np.array([ax_msgs[i].value for i in range(n)])
-    ay_g = np.array([ay_msgs[i].value for i in range(n)])
+    time_g = np.ascontiguousarray(lon_chan.timestamps[:n], dtype=np.float64)
+    ax = np.ascontiguousarray(lon_chan.values[:n], dtype=np.float64)
+    ay_g = np.ascontiguousarray(lat_chan.values[:n], dtype=np.float64)
     g_sum = np.sqrt(ax ** 2 + ay_g ** 2)
     data_log.add_channel(CH_G_COMBINED, "G", float, 2)
-    data_log.channels[CH_G_COMBINED].messages = [Message(time_g[i], g_sum[i]) for i in range(n)]
+    data_log.channels[CH_G_COMBINED].set_samples(time_g, g_sum)
 
 
 def derive_brake_pos(data_log):
     if CH_BRAKE_PRESS not in data_log.channels or CH_BRAKE_POS in data_log.channels:
         return
     press_chan = data_log.channels[CH_BRAKE_PRESS]
-    n = len(press_chan.messages)
+    n = len(press_chan.timestamps)
     if n < 1:
         return
-    time_p = [m.timestamp for m in press_chan.messages]
-    press_vals = np.array([m.value for m in press_chan.messages])
+    time_p = np.ascontiguousarray(press_chan.timestamps, dtype=np.float64)
+    press_vals = np.ascontiguousarray(press_chan.values, dtype=np.float64)
     if press_chan.units == "bar":
-        press_vals *= 100.0
+        press_vals = press_vals * 100.0
     bpos = np.clip(press_vals / 96.0, 0.0, 100.0)
     data_log.add_channel(CH_BRAKE_POS, "%", float, 2)
-    data_log.channels[CH_BRAKE_POS].messages = [Message(time_p[i], bpos[i]) for i in range(n)]
+    data_log.channels[CH_BRAKE_POS].set_samples(time_p, bpos)
 
 
 def calculate_input_rates(data_log):
@@ -230,15 +231,18 @@ def mirror_throttle_accel(data_log):
     if CH_THROTTLE_POS not in data_log.channels and CH_ACCELERATOR_POS in data_log.channels:
         src = data_log.channels[CH_ACCELERATOR_POS]
         data_log.add_channel(CH_THROTTLE_POS, "%", float, src.decimals)
-        data_log.channels[CH_THROTTLE_POS].messages = [Message(m.timestamp, m.value) for m in src.messages]
+        data_log.channels[CH_THROTTLE_POS].set_samples(
+            np.ascontiguousarray(src.timestamps, dtype=np.float64).copy(),
+            np.ascontiguousarray(src.values, dtype=np.float64).copy(),
+        )
 
 
 def calculate_rate(data_log, channel_name, unit):
     """ Helper to calculate the rate of change for a channel. """
     if channel_name in data_log.channels:
         chan = data_log.channels[channel_name]
-        vals = np.array([m.value for m in chan.messages])
-        times = np.array([m.timestamp for m in chan.messages])
+        vals = np.ascontiguousarray(chan.values, dtype=np.float64)
+        times = np.ascontiguousarray(chan.timestamps, dtype=np.float64)
         if len(times) < 2:
             return
         rate = np.zeros(len(times))
@@ -248,17 +252,17 @@ def calculate_rate(data_log, channel_name, unit):
 
         new_name = channel_name + " Rate"
         data_log.add_channel(new_name, unit, float, 2)
-        data_log.channels[new_name].messages = [Message(times[i], rate[i]) for i in range(len(times))]
+        data_log.channels[new_name].set_samples(times.copy(), rate)
 
 
 def derive_yaw_rate_from_gps_heading(data_log):
     if CH_YAW_RATE in data_log.channels:
         return
     gps_h_chan = data_log.channels.get(CH_GPS_HEADING)
-    if not gps_h_chan or len(gps_h_chan.messages) < 2:
+    if not gps_h_chan or len(gps_h_chan.timestamps) < 2:
         return
-    times = np.array([m.timestamp for m in gps_h_chan.messages])
-    headings = np.array([m.value for m in gps_h_chan.messages])
+    times = np.ascontiguousarray(gps_h_chan.timestamps, dtype=np.float64)
+    headings = np.ascontiguousarray(gps_h_chan.values, dtype=np.float64)
     h_unwrapped = np.unwrap(np.radians(headings))
     h_deg = np.degrees(h_unwrapped)
     yaw_rate_val = -np.gradient(h_deg, times)
@@ -268,14 +272,14 @@ def derive_yaw_rate_from_gps_heading(data_log):
         padded = np.pad(yaw_rate_val, (w // 2, w - 1 - w // 2), mode="edge")
         yaw_rate_val = np.mean(np.lib.stride_tricks.sliding_window_view(padded, w), axis=1)[:len(yaw_rate_val)]
     spd_chan = data_log.channels.get(CH_GROUND_SPEED)
-    if spd_chan and len(spd_chan.messages) == len(times):
-        v_vals = np.array([m.value for m in spd_chan.messages])
+    if spd_chan and len(spd_chan.timestamps) == len(times):
+        v_vals = np.ascontiguousarray(spd_chan.values, dtype=np.float64)
         if spd_chan.units == "mph":
-            v_vals *= 1.60934
+            v_vals = v_vals * 1.60934
         yaw_rate_val[v_vals < 5.0] = 0.0
     yaw_rate_val = np.clip(yaw_rate_val, -150.0, 150.0)
     data_log.add_channel(CH_YAW_RATE, "deg/s", float, 2)
-    data_log.channels[CH_YAW_RATE].messages = [Message(times[i], yaw_rate_val[i]) for i in range(len(times))]
+    data_log.channels[CH_YAW_RATE].set_samples(times.copy(), yaw_rate_val)
     data_log.metadata["yaw_rate_source"] = "gps_heading_derivative"
     data_log.metadata["yaw_axis_sign_verified"] = False
 
