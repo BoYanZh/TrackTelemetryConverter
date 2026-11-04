@@ -69,19 +69,37 @@ def _dlap_output_path(ld_filename, source_path):
     return dlap_filename
 
 
-def _direction_suffix_applies(active_type, data_log):
+def _venue_is_bidirectional(venue_name):
+    """Whether a free-text venue is a track run in both directions.
+
+    Mirrors the ACTI ``bidirectional`` profile flag for non-ACTI inputs,
+    whose venues are free text rather than profile keys: only Thunderhill
+    West and Buttonwillow layouts take ``_cw``/``_ccw``. Everything else
+    (Sonoma, Laguna Seca, Thunderhill East, CA-9, ...) keeps plain names.
+    """
+    venue = (venue_name or "").lower().replace("_", " ")
+    if "buttonwillow" in venue:
+        return True
+    return "thunderhill" in venue and "west" in venue
+
+
+def _direction_suffix_applies(active_type, data_log, explicit_venue=""):
     """Whether --direction-suffix may rename this conversion.
 
-    ACTI tracks only take ``_cw``/``_ccw`` when their resolved profile is
-    marked bidirectional (shipped: thunderhill_west, buttonwillow_1a_ccw;
-    custom anchors can set it; thunderhill_auto follows the resolved
-    layout). Single-direction tracks such as sonoma keep plain names even
-    with the flag. Other input types keep the flag's generic GPS-heading
-    behavior.
+    Only tracks run in both directions take ``_cw``/``_ccw``: ACTI tracks
+    when their resolved profile is marked bidirectional (shipped:
+    thunderhill_west, buttonwillow_1a_ccw; custom anchors can set it;
+    thunderhill_auto follows the resolved layout); other inputs when the
+    venue -- parsed from the file, or explicitly asserted with
+    --venue_name -- names Thunderhill West or Buttonwillow.
+    Single-direction tracks such as sonoma keep plain names even with
+    the flag.
     """
-    if active_type != "ACTI":
-        return True
-    return bool(getattr(data_log, "metadata", {}).get("acti_bidirectional", False))
+    metadata = getattr(data_log, "metadata", None) or {}
+    if active_type == "ACTI":
+        return bool(metadata.get("acti_bidirectional", False))
+    venue = explicit_venue or metadata.get("venue_name", "")
+    return _venue_is_bidirectional(venue)
 
 
 def _direction_suffix_candidate_sets(args, out_base, ld_filename, output_targets):
@@ -539,8 +557,9 @@ def _convert_one(
 
         direction, total = None, 0.0
         if getattr(args, "direction_suffix", False):
-            if not _direction_suffix_applies(active_type, data_log):
-                track = getattr(data_log, "metadata", {}).get("acti_track", active_type)
+            if not _direction_suffix_applies(active_type, data_log, getattr(args, "venue_name", "")):
+                metadata = getattr(data_log, "metadata", None) or {}
+                track = metadata.get("acti_track") or metadata.get("venue_name") or active_type
                 emit(f"direction suffix not applicable to '{track}'; keeping plain names "
                      "(only bidirectional tracks such as thunderhill_west take _cw/_ccw)")
             else:

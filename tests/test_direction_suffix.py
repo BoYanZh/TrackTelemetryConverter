@@ -151,7 +151,7 @@ def test_cli_direction_suffix_explicit_output_wins(tmp_path):
     assert "WARNING" in result.stdout and "--output" in result.stdout
 
 
-def test_cli_direction_suffix_no_gps_warns_and_keeps_name(tmp_path):
+def test_cli_direction_suffix_no_gps_keeps_plain_names(tmp_path):
     src = str(tmp_path / "nogps.csv")
     with open(src, "w", encoding="utf-8") as handle:
         handle.write("Time,Throttle Pos\n")
@@ -162,7 +162,7 @@ def test_cli_direction_suffix_no_gps_warns_and_keeps_name(tmp_path):
     assert os.path.isfile(str(tmp_path / "nogps.ld"))
     assert not os.path.exists(str(tmp_path / "nogps_cw.ld"))
     assert not os.path.exists(str(tmp_path / "nogps_ccw.ld"))
-    assert "WARNING" in result.stdout
+    assert "not applicable" in result.stdout
 
 
 def test_batch_direction_suffix(tmp_path):
@@ -332,3 +332,19 @@ def test_direction_suffix_skipped_for_single_direction_track(tmp_path):
     assert not os.path.exists(str(tmp_path / "a_gps_cw.ld"))
     assert "not applicable" in result.stdout
     assert _ldx_detail(str(tmp_path / "a_gps.ldx"), "Venue") == "Test Loop"
+
+
+def test_venue_is_bidirectional_matches_west_and_buttonwillow():
+    from track_telemetry_converter.conversion import _venue_is_bidirectional
+
+    assert _venue_is_bidirectional("Thunderhill West")
+    assert _venue_is_bidirectional("Thunderhill 5 Mile West Bypass")
+    assert _venue_is_bidirectional("thunderhill_west")
+    assert _venue_is_bidirectional("Buttonwillow 1A CCW")
+    assert _venue_is_bidirectional("buttonwillow_raceway_park")
+    assert not _venue_is_bidirectional("Sonoma Raceway")
+    assert not _venue_is_bidirectional("Thunderhill East Bypass")
+    assert not _venue_is_bidirectional("Laguna Seca")
+    assert not _venue_is_bidirectional("CA-9 S")
+    assert not _venue_is_bidirectional("")
+    assert not _venue_is_bidirectional(None)
