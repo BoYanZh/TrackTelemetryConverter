@@ -17,6 +17,7 @@ import numpy as np
 
 from .._vendor.ldparser import ldData
 from ..channels import (
+    CH_ACCELERATOR_POS,
     CH_BRAKE_POS,
     CH_CG_ACCEL_LAT,
     CH_CG_ACCEL_LON,
@@ -130,6 +131,9 @@ _ACTI_CHANNEL_MAP = {
     # canonical throttle channel following the RaceChrono PPS convention
     # (pedal values under the throttle name); there is no throttle-body
     # channel to confuse it with, so no pedal/throttle ambiguity arises.
+    # The mirror below carries the same pedal series on the canonical
+    # accelerator channel, so sim runs overlay 1:1 with real-car logs that
+    # keep pedal (Accelerator Pos) and throttle body (Throttle Pos) apart.
     "Throttle Pos": (CH_THROTTLE_POS, "%", 1),
     "Brake Pos": (CH_BRAKE_POS, "%", 1),
     "Engine RPM": (CH_ENGINE_RPM, "rpm", 0),
@@ -694,6 +698,25 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         fch = float(src.freq) if src.freq and src.freq > 0 else 20.0
         vals = np.asarray(src.data, dtype=float)
         data_log.channels[out_name].set_samples(np.arange(len(vals)) / fch, vals)
+
+    # Mirror the sim pedal onto the canonical accelerator channel. The ACTI
+    # app logs the driver's pedal input as "Throttle Pos" and never a
+    # throttle-body angle; real-car logs keep the two apart (Accelerator
+    # Pos = pedal, Throttle Pos = body). Without this mirror a sim run
+    # could never be overlaid on a real car's Accelerator Pos trace.
+    # A genuinely logged "Accelerator Pos" source channel always wins and
+    # is preserved verbatim by the loop below instead.
+    pedal = _get_ld_channel(ld, "Throttle Pos")
+    if (
+        pedal is not None
+        and len(pedal.data) > 0
+        and CH_ACCELERATOR_POS not in data_log.channels
+        and _get_ld_channel(ld, "Accelerator Pos") is None
+    ):
+        fch = float(pedal.freq) if pedal.freq and pedal.freq > 0 else 20.0
+        vals = np.asarray(pedal.data, dtype=float)
+        data_log.add_channel(CH_ACCELERATOR_POS, "%", float, 1)
+        data_log.channels[CH_ACCELERATOR_POS].set_samples(np.arange(len(vals)) / fch, vals)
 
     # Preserve every other source channel under its original name, unless
     # that name is already taken by a mapped / synthesised channel above.

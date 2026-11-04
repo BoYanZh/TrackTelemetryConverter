@@ -135,7 +135,10 @@ def test_parse_acti_log_end_to_end(tmp_path):
     assert "GPS Longitude" in log.channels
     assert "GPS Heading" in log.channels
     assert "Throttle Pos" in log.channels
-    assert "Accelerator Pos" not in log.channels
+    assert "Accelerator Pos" in log.channels
+    np.testing.assert_array_equal(
+        log.channels["Accelerator Pos"].values, log.channels["Throttle Pos"].values,
+    )
     laps = log.laps_info["laps"]
     assert [lap["lap_num"] for lap in laps] == [1, 2]
     assert log.laps_info["total_laps"] == 2
@@ -435,3 +438,32 @@ def test_cli_help_exits_zero():
     with pytest.raises(SystemExit) as exc:
         cli.main(["--help"])
     assert exc.value.code == 0
+def test_parse_acti_log_prefers_recorded_accelerator_over_mirror(tmp_path):
+    """A genuinely logged Accelerator Pos is kept verbatim, never mirrored."""
+    n = 400
+    freq = 20.0
+    t = np.arange(n) / freq
+    th = np.linspace(0, 2 * math.pi, n, endpoint=False)
+    xy = np.column_stack([300 * np.cos(th), 300 * np.sin(th)])
+    log = DataLog()
+    log.add_channel("Car Coord X", "m", float, 3)
+    log.channels["Car Coord X"].set_samples(t, xy[:, 0])
+    log.add_channel("Car Coord Y", "m", float, 3)
+    log.channels["Car Coord Y"].set_samples(t, xy[:, 1])
+    log.add_channel("Ground Speed", "km/h", float, 2)
+    log.channels["Ground Speed"].set_samples(t, np.full(n, 100.0))
+    log.add_channel("Lap Time", "s", float, 3)
+    log.channels["Lap Time"].set_samples(t, np.linspace(0, n / freq, n))
+    log.add_channel("Throttle Pos", "%", float, 1)
+    log.channels["Throttle Pos"].set_samples(t, np.full(n, 100.0))
+    log.add_channel("Accelerator Pos", "%", float, 1)
+    log.channels["Accelerator Pos"].set_samples(t, np.full(n, 42.0))
+    src = str(tmp_path / "acti.ld")
+    ml = MotecLog()
+    ml.initialize()
+    ml.add_all_channels(log)
+    ml.write(src)
+
+    out = DataLog()
+    out.from_acti_log(src, track="test_loop", anchors=_anchors())
+    np.testing.assert_allclose(out.channels["Accelerator Pos"].values, np.full(n, 42.0))
