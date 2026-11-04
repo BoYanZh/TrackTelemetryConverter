@@ -313,6 +313,96 @@ def _build_motec_log(args, data_log, direction=None, emit=lambda _message: None)
     return motec_log
 
 
+def _log_end_epoch_sec(data_log) -> float | None:
+    """Return the log's last recorded moment as epoch seconds, or None.
+
+    Channel timestamps are elapsed seconds for most parsers (RCZ/DLAP carry
+    the absolute origin in ``time_origin_epoch_ms``; VBO/IBT/FIT/XRK/ACTI
+    pair relative timestamps with a header ``datetime``), except CAN-style
+    absolute epoch timestamps. The last moment is therefore:
+
+    - ``end()`` directly when timestamps already look like epoch seconds;
+    - ``origin_ms/1000 + end()`` when an absolute origin is known;
+    - ``datetime_utc/datetime + duration`` for relative timestamps with a
+      start wall-clock (naive datetimes are interpreted in local time via
+      ``timestamp()``, matching how the OS displays file mtimes);
+    - None when the log carries no wall-clock (e.g. Tesla, TrackAddict).
+    """
+    try:
+        end = float(data_log.end())
+        start = float(data_log.start())
+    except (TypeError, ValueError):
+        return None
+    if end != end or start != start:  # NaN guard on empty logs
+        return None
+
+    # Absolute epoch timestamps (candump style: 1.6e9 s).
+    if end > 1e8:
+        return end
+
+    duration = max(0.0, end - start)
+
+    origin_ms = getattr(data_log, "time_origin_epoch_ms", None)
+    if origin_ms is not None:
+        try:
+            return float(origin_ms) / 1000.0 + end
+        except (TypeError, ValueError):
+            pass
+
+    dt_utc = getattr(data_log, "datetime_utc", None)
+    if dt_utc is not None:
+        try:
+            return float(dt_utc.timestamp()) + duration
+        except (OverflowError, OSError, ValueError):
+            pass
+
+    dt = getattr(data_log, "datetime", None)
+    if dt is not None:
+        try:
+            return float(dt.timestamp()) + duration
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
+
+
+def _apply_mtime_from_log(paths, data_log, emit=lambda _message: None, source_path=None) -> None:
+    """Set every written output's mtime/atime to the log's last moment.
+
+    Falls back to the source file's mtime when the log carries no
+    wall-clock (CSV exports without dates, Tesla, TrackAddict, ...);
+    only warns and leaves files untouched when neither is available.
+    Per-file OSError is reported as a warning, never a conversion failure.
+    """
+    end_epoch = _log_end_epoch_sec(data_log)
+    if end_epoch is None and source_path:
+        try:
+            import os as _os
+
+            end_epoch = float(_os.path.getmtime(source_path))
+        except OSError:
+            end_epoch = None
+        else:
+            import datetime as _datetime
+
+            moment = _datetime.datetime.fromtimestamp(end_epoch).strftime("%Y-%m-%d %H:%M:%S")
+            emit(f"No wall-clock in log; using source file mtime: {moment}")
+    if end_epoch is None:
+        emit("WARNING: --mtime-from-log skipped: log carries no wall-clock datetime")
+        return
+    import datetime as _datetime
+
+    moment = _datetime.datetime.fromtimestamp(end_epoch).strftime("%Y-%m-%d %H:%M:%S")
+    for path in paths:
+        try:
+            import os as _os
+
+            _os.utime(path, (end_epoch, end_epoch))
+        except OSError as exc:
+            emit(f"WARNING: --mtime-from-log could not touch {path}: {exc}")
+            continue
+    emit(f"Set output mtime to log end: {moment}")
+
+
 def _write_all_outputs(args, motec_log, data_log, ld_filename, ldx_filename, output_targets, emit=lambda _message: None):
     """Write the .ld/.ldx pair plus every requested auxiliary export."""
     emit("Saving MoTeC log...")
@@ -402,6 +492,7 @@ class ConversionOptions:
     kml: bool = False
     csv: bool = False
     csv_wallclock: bool = False
+    mtime_from_log: bool = False
     vbo: bool = False
     vbo_columns: str | None = None
     dlap: bool = False
@@ -607,6 +698,8 @@ def _convert_one(
             output_targets,
             emit=emit,
         )
+        if getattr(args, "mtime_from_log", False):
+            _apply_mtime_from_log(written_paths, data_log, emit=emit, source_path=args.log)
         return ConversionResult(
             status="success",
             output_paths=tuple(written_paths),

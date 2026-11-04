@@ -177,6 +177,11 @@ def build_parser():
     parser.add_argument("--dlap", action="store_true", help="Also generate Dragy DLAP archive (LapTimer / GPS analysis import)")
     parser.add_argument("--csv-wallclock", action="store_true", default=False, dest="csv_wallclock",
                         help="Write wall-clock timestamps in CSV instead of elapsed seconds")
+    parser.add_argument("--mtime-from-log", action="store_true", default=False, dest="mtime_from_log",
+                        help="After conversion, set each output file's modification time to the "
+                             "last recorded moment in the source log (start wall-clock + "
+                             "duration); logs without a wall-clock fall back to the source "
+                             "file's mtime")
     parser.add_argument("--dbc", type=str, help="Path to DBC file, required if log type CAN")
     parser.add_argument("--track", type=str, default="",
                         help="ACTI track profile key (e.g. thunderhill_west); required for ACTI input. "

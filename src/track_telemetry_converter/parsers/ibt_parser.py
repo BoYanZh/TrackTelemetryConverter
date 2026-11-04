@@ -70,7 +70,29 @@ def _parse_ibt_timing(raw_file):
     )
 
 
-def _parse_ibt_session_info(data_log, raw_file, geo):
+def _parse_filename_start(ibt_file_path):
+    """Return the recording-start datetime from the iRacing filename, or None.
+
+    iRacing names telemetry files ``<car> <track> YYYY-MM-DD HH-MM-SS.ibt``
+    with the session start time, e.g. ``mx5 ... 2026-11-04 10-28-59.ibt``.
+    """
+    import datetime as _dt
+    import os as _os
+    import re as _re
+
+    match = _re.search(
+        r"(\d{4})-(\d{2})-(\d{2}) (\d{2})-(\d{2})-(\d{2})",
+        _os.path.basename(ibt_file_path),
+    )
+    if not match:
+        return None
+    try:
+        return _dt.datetime(*map(int, match.groups()))
+    except ValueError:
+        return None
+
+
+def _parse_ibt_session_info(data_log, raw_file, geo, ibt_file_path=""):
     """Extract venue/driver/car/datetime from the YAML session block."""
     # --- 3. Parse YAML Session Info ---
     sess_yaml = raw_file[geo.sess_info_offset: geo.sess_info_offset + geo.sess_info_len].decode("latin-1", errors="ignore")
@@ -92,8 +114,12 @@ def _parse_ibt_session_info(data_log, raw_file, geo):
         elif ls.startswith("Date:"):
             weekend_date = ls.split(":", 1)[1].strip()
 
-    # Parse session datetime from YAML WeekendDate field (e.g. "2026-08-07")
-    if weekend_date:
+    # Session start precedence: the iRacing filename timestamp is the
+    # actual recording start (verified: start + duration == file mtime on
+    # real files); the YAML WeekendDate is only the season weekend date
+    # (often months off) and is kept as a renamed-file fallback.
+    sess_dt = _parse_filename_start(ibt_file_path)
+    if sess_dt is None and weekend_date:
         try:
             import datetime as _dt
             sess_dt = _dt.datetime.strptime(weekend_date, "%Y-%m-%d")
@@ -105,6 +131,11 @@ def _parse_ibt_session_info(data_log, raw_file, geo):
     data_log.metadata["vehicle_id"] = car
     if sess_dt:
         data_log.datetime = sess_dt
+        try:
+            import datetime as _dt
+            data_log.datetime_utc = sess_dt.astimezone(_dt.timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            pass
 
 
 def parse_ibt_log(data_log, ibt_file_path):
@@ -136,7 +167,7 @@ def parse_ibt_log(data_log, ibt_file_path):
     dt = 1.0 / geo.tick_rate
 
     # --- 3. Parse YAML Session Info ---
-    _parse_ibt_session_info(data_log, raw_file, geo)
+    _parse_ibt_session_info(data_log, raw_file, geo, ibt_file_path)
 
     # --- 4. Parse irsdk_varHeader array ---
     # Each varHeader: type(i), offset(i), count(i), countAsTime(i),
