@@ -47,18 +47,19 @@ def _write_synthetic_ld(path, clockwise=False, laps=2, freq=20.0):
     return path
 
 
-def _write_anchor(path):
+def _write_anchor(path, bidirectional=True):
+    profile = {
+        "name": "Test Loop",
+        "ref_lat": 39.0,
+        "ref_lon": -122.0,
+        "theta_deg": 0.0,
+        "dx_m": 0.0,
+        "dy_m": 0.0,
+    }
+    if bidirectional:
+        profile["bidirectional"] = True
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump({
-            "test_loop": {
-                "name": "Test Loop",
-                "ref_lat": 39.0,
-                "ref_lon": -122.0,
-                "theta_deg": 0.0,
-                "dx_m": 0.0,
-                "dy_m": 0.0,
-            },
-        }, handle)
+        json.dump({"test_loop": profile}, handle)
     return path
 
 
@@ -282,3 +283,23 @@ def test_batch_venue_suffix(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert _ldx_detail(str(tmp_path / "va_gps_ccw.ldx"), "Venue") == "Test Loop CCW"
     assert _ldx_detail(str(tmp_path / "vb_gps_cw.ldx"), "Venue") == "Test Loop CW"
+
+
+def test_direction_suffix_skipped_for_single_direction_track(tmp_path):
+    """--direction-suffix is a no-op for single-direction ACTI profiles.
+
+    The flag stays global, but only bidirectional profiles take _cw/_ccw:
+    sonoma-style tracks keep plain names with a notice, no venue suffix.
+    """
+    _write_synthetic_ld(str(tmp_path / "a.ld"), clockwise=False)
+    anchor = _write_anchor(str(tmp_path / "anchors.json"), bidirectional=False)
+    result = _run_cli_in_process(
+        [str(tmp_path), "ACTI", "--track", "test_loop", "--anchor", anchor,
+         "--direction-suffix"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert os.path.isfile(str(tmp_path / "a_gps.ld"))
+    assert os.path.isfile(str(tmp_path / "a_gps.ldx"))
+    assert not os.path.exists(str(tmp_path / "a_gps_ccw.ld"))
+    assert not os.path.exists(str(tmp_path / "a_gps_cw.ld"))
+    assert "not applicable" in result.stdout
+    assert _ldx_detail(str(tmp_path / "a_gps.ldx"), "Venue") == "Test Loop"

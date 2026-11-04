@@ -291,6 +291,13 @@ def test_detect_track_key():
     assert acti_parser.resolve_track_profile("nope", "x.ld", profiles) is None
 
 
+def test_shipped_bidirectional_markers():
+    """Only tracks run in both directions take _cw/_ccw (thill west, buttonwillow)."""
+    assert acti_parser.ACTI_TRACK_PROFILES["thunderhill_west"].get("bidirectional") is True
+    assert acti_parser.ACTI_TRACK_PROFILES["buttonwillow_1a_ccw"].get("bidirectional") is True
+    assert not acti_parser.ACTI_TRACK_PROFILES["sonoma"].get("bidirectional", False)
+
+
 def test_cli_help_exits_zero():
     from track_telemetry_converter import cli
 

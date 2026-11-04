@@ -37,6 +37,11 @@ EARTH_RADIUS_M = 6371000.0
 
 #: Shipped track profiles. ``scale`` is unity for every calibrated track;
 #: calibration refuses to save anything that deviates more than 5%.
+#: ``bidirectional`` marks tracks that are actually run in both directions
+#: (thunderhill_west, buttonwillow): only those ever take the opt-in
+#: --direction-suffix ``_cw``/``_ccw`` names. Single-direction tracks such as
+#: sonoma would only gain noise, so the suffix is skipped for them even when
+#: the flag is passed. Custom anchors may set ``bidirectional`` the same way.
 ACTI_TRACK_PROFILES = {
     "thunderhill_east_bypass": {
         "name": "Thunderhill Raceway Park (East Bypass)",
@@ -65,6 +70,7 @@ ACTI_TRACK_PROFILES = {
         "dx_m": 640.518,
         "dy_m": 479.391,
         "rmse_error_m": 4.41,
+        "bidirectional": True,
     },
     "laguna_seca": {
         "name": "Laguna Seca",
@@ -95,6 +101,7 @@ ACTI_TRACK_PROFILES = {
         "dx_m": -372.26,
         "dy_m": 415.941,
         "rmse_error_m": 4.1,
+        "bidirectional": True,
     },
 }
 
@@ -620,6 +627,10 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
     data_log.metadata["venue_name"] = cfg.get("name", "")
     data_log.metadata["driver"] = getattr(ld.head, "driver", "")
     data_log.metadata["vehicle_id"] = getattr(ld.head, "vehicleid", "")
+    # Resolved profile key + direction relevance for the CLI: only
+    # bidirectional tracks take --direction-suffix _cw/_ccw names.
+    data_log.metadata["acti_track"] = key
+    data_log.metadata["acti_bidirectional"] = bool(cfg.get("bidirectional", False))
     head_dt = getattr(ld.head, "datetime", None)
     if isinstance(head_dt, datetime.datetime):
         data_log.datetime = head_dt

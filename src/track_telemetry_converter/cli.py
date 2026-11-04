@@ -184,6 +184,7 @@ def build_parser():
                         dest="direction_suffix",
                         help="Opt-in: append _cw/_ccw track-direction suffix to output names "
                              "and ' CW'/' CCW' to the venue (from GPS-heading winding; "
+                             "ACTI only for bidirectional profiles such as thunderhill_west; "
                              "default filenames only, explicit --output/--venue_name "
                              "keep their values)")
 

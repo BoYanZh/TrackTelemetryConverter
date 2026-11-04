@@ -69,6 +69,21 @@ def _dlap_output_path(ld_filename, source_path):
     return dlap_filename
 
 
+def _direction_suffix_applies(active_type, data_log):
+    """Whether --direction-suffix may rename this conversion.
+
+    ACTI tracks only take ``_cw``/``_ccw`` when their resolved profile is
+    marked bidirectional (shipped: thunderhill_west, buttonwillow_1a_ccw;
+    custom anchors can set it; thunderhill_auto follows the resolved
+    layout). Single-direction tracks such as sonoma keep plain names even
+    with the flag. Other input types keep the flag's generic GPS-heading
+    behavior.
+    """
+    if active_type != "ACTI":
+        return True
+    return bool(getattr(data_log, "metadata", {}).get("acti_bidirectional", False))
+
+
 def _detect_track_direction(data_log):
     """Classify loop direction from the log's GPS Heading channel.
 
@@ -460,17 +475,22 @@ def _convert_one(
 
         direction, total = None, 0.0
         if getattr(args, "direction_suffix", False):
-            direction, total = _detect_track_direction(data_log)
-            if direction is None:
-                emit(
-                    "WARNING: --direction-suffix skipped: no usable GPS Heading "
-                    "(no GPS data or indeterminate direction)",
-                )
-            elif getattr(args, "venue_name", ""):
-                emit(
-                    "WARNING: --direction-suffix venue ignored: --venue_name is explicit; "
-                    "keeping user value",
-                )
+            if not _direction_suffix_applies(active_type, data_log):
+                track = getattr(data_log, "metadata", {}).get("acti_track", active_type)
+                emit(f"direction suffix not applicable to '{track}'; keeping plain names "
+                     "(only bidirectional tracks such as thunderhill_west take _cw/_ccw)")
+            else:
+                direction, total = _detect_track_direction(data_log)
+                if direction is None:
+                    emit(
+                        "WARNING: --direction-suffix skipped: no usable GPS Heading "
+                        "(no GPS data or indeterminate direction)",
+                    )
+                elif getattr(args, "venue_name", ""):
+                    emit(
+                        "WARNING: --direction-suffix venue ignored: --venue_name is explicit; "
+                        "keeping user value",
+                    )
 
         motec_log = _build_motec_log(args, data_log, direction=direction, emit=emit)
         if getattr(args, "direction_suffix", False):
