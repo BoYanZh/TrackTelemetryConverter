@@ -537,11 +537,11 @@ def _build_laps_info(groups, freq, resets=None):
     carries exactly one Out Lap ahead of lap 1.
 
     Group tuples carry interpolated (duration, start, end, t_start, t_end).
-    ``resets`` holds the interpolated start/finish crossing times; only
-    those become Beacons (falling back to group boundaries when resets is
-    None, e.g. legacy callers). Log start (mid-lap) and file end
-    (truncated lap) are not crossings, so beaconing them makes i2 render a
-    phantom zero-length lap and shifts every lap number by one.
+    ``resets`` holds the interpolated start/finish crossing times, which
+    become Beacons (falling back to group boundaries when resets is None,
+    e.g. legacy callers). A (0.0, "Start/Finish") beacon is always prepended
+    (unless a true crossing already sits at zero) so that i2 renders a
+    leading "Out Lap 0:00.000" row ahead of the timed laps.
     """
     laps = []
     for k, item in enumerate(groups):
@@ -581,7 +581,14 @@ def _build_laps_info(groups, freq, resets=None):
                 if not any(abs(boundary - b[0]) <= 1e-6 for b in beacons):
                     beacons.append((boundary, "Start/Finish"))
     else:
-        beacons = [(float(t), "Start/Finish") for t in resets]
+        # A leading 0.0 beacon makes i2 render the opening "Out Lap
+        # 0:00.000" row ahead of the timed laps; the real S/F crossings
+        # follow from `resets`. Skip it when a true crossing already sits
+        # at (or within rounding of) zero.
+        beacon_times = [float(t) for t in resets]
+        if not beacon_times or beacon_times[0] > 1e-9:
+            beacon_times = [0.0] + beacon_times
+        beacons = [(t, "Start/Finish") for t in beacon_times]
     timed = [lap for lap in laps if lap["type"] == "Timed"]
     return {
         "laps": laps,
@@ -818,6 +825,6 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
             "total_laps": 1,
             "fastest_lap": 1,
             "fastest_time": 0.0,
-            "beacons": [],
+            "beacons": [(0.0, "Start/Finish")] if duration > 0 else [],
         }
     data_log.laps_info = _filter_acti_lap(data_log, laps_info, target_lap)

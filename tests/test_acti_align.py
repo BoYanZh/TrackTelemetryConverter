@@ -297,14 +297,14 @@ def test_all_lap_bounds_interpolates_reset_crossing():
     assert abs(durs[1] - 19.97) < 0.005
     assert abs(durs[2] - 19.97) < 0.005
     assert abs(durs[3] - (62.5 - 59.91)) < 0.005
-    # Only true reset crossings become beacons: no marker at log start
-    # (mid-lap) or file end (truncated lap), so i2 shows Out/Lap/In rows
-    # with no phantom zero-length lap shifting the numbers by one.
+    # Beacons lead with 0.0 so i2 renders the opening "Out Lap
+    # 0:00.000" row; the real S/F crossings follow. The file-end
+    # truncation is still not beaconed.
     assert list(resets) == pytest.approx([19.97, 39.94, 59.91], abs=0.005)
     info = acti_parser._build_laps_info(groups, freq, resets)
     assert abs(info["laps"][1]["duration"] - 19.97) < 0.005
     beacons = [b[0] for b in info["beacons"]]
-    assert beacons == pytest.approx([19.97, 39.94, 59.91], abs=0.005)
+    assert beacons == pytest.approx([0.0, 19.97, 39.94, 59.91], abs=0.005)
 
 
 def test_all_lap_bounds_prefers_official_last_lap_time():
@@ -345,7 +345,7 @@ def test_all_lap_bounds_prefers_official_last_lap_time():
     info = acti_parser._build_laps_info(groups, freq, resets)
     assert info["fastest_time"] == pytest.approx(19.85, abs=1e-9)
     assert [b[0] for b in info["beacons"]] == pytest.approx(
-        [19.97, 39.87, 59.72], abs=0.005)
+        [0.0, 19.97, 39.87, 59.72], abs=0.005)
 
 
 def test_all_lap_bounds_ignores_wild_official_time():
