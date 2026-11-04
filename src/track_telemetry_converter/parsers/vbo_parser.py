@@ -6,9 +6,37 @@ from __future__ import annotations
 
 import datetime
 
+import numpy as np
+
 from ..channels import CH_ACCELERATOR_POS, CHANNEL_ALIASES
-from ..models import Message
 from ..provenance import record_channel_provenance
+
+#: Rows per chunk in the vectorized data pass (bounds the transient
+#: split-string table while keeping numpy conversions amortized).
+_VBO_CHUNK_ROWS = 20_000
+
+
+def _safe_float_column(cells):
+    """Convert string cells to (values, valid) with legacy float() semantics.
+
+    C-speed ``astype`` fast path for clean columns; per-element fallback only
+    for chunks containing bad cells (bad cells are skipped, like the legacy
+    ``except ValueError: pass``).
+    """
+    str_arr = np.asarray(cells)
+    try:
+        return str_arr.astype(np.float64), np.ones(len(str_arr), dtype=bool)
+    except ValueError:
+        pass
+    vals = np.empty(len(cells), dtype=np.float64)
+    valid = np.zeros(len(cells), dtype=bool)
+    for i, cell in enumerate(cells):
+        try:
+            vals[i] = float(cell)
+            valid[i] = True
+        except ValueError:
+            vals[i] = np.nan
+    return vals, valid
 
 
 def _parse_vbo_latlon(val_str, is_lon=False):
@@ -74,10 +102,11 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
         print("ERROR: VBO file missing 'time' column")
         return
 
-    col_idx_map = {}
+    # Group source columns by canonical channel, preserving column order:
+    # later columns win per row (refined values sort last).
+    groups = {}
     # Several VBO writers emit the same signal twice (raw + `-calc`/`-canbus`
-    # variants). One sample per channel per row; later columns win (refined
-    # values sort last). The winner is recorded instead of being implicit.
+    # variants). The winner is recorded instead of being implicit.
     raw_columns = {}
     for idx, col_name in enumerate(cols_raw):
         if col_name in CHANNEL_ALIASES:
@@ -89,8 +118,9 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
             # is kPa (cf. xrk_parser pressure conversion).
             factor = 100.0 if col_name == "BrakePress" else 1.0
             is_latlon = col_name in ("lat", "long")
-            is_lon = (col_name == "long")
-            col_idx_map[idx] = (out_name, is_latlon, is_lon, factor)
+            groups.setdefault(out_name, []).append(
+                (idx, is_latlon, (col_name == "long"), factor),
+            )
 
     for out_name, raws in raw_columns.items():
         if len(raws) > 1:
@@ -117,28 +147,45 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
         )
 
     t0 = None
-    for line_s in data_lines:
-        parts = line_s.split()
-        if len(parts) >= len(cols_raw):
-            t_sec = _parse_vbo_time(parts[time_idx])
-            if t0 is None:
-                t0 = t_sec
-            t_rel = t_sec - t0
-            if t_rel < 0:
-                t_rel += 86400.0  # Handle midnight wrapping
-            row_vals = {}
-            for idx, (out_name, is_latlon, is_lon, factor) in col_idx_map.items():
-                try:
-                    val_str = parts[idx]
-                    if is_latlon:
-                        v_val = _parse_vbo_latlon(val_str, is_lon=is_lon)
-                    else:
-                        v_val = float(val_str) * factor
-                    # Several VBO writers emit the same signal twice (raw +
-                    # `-calc`/`-canbus` variants). One sample per channel per
-                    # row; later columns win (refined values sort last).
-                    row_vals[out_name] = v_val
-                except ValueError:
-                    pass
-            for out_name, v_val in row_vals.items():
-                data_log.channels[out_name].messages.append(Message(t_rel, v_val))
+    n_cols = len(cols_raw)
+    buffers = {out_name: ([], []) for out_name in groups}
+    for start in range(0, len(data_lines), _VBO_CHUNK_ROWS):
+        rows = [line.split() for line in data_lines[start:start + _VBO_CHUNK_ROWS]]
+        rows = [parts for parts in rows if len(parts) >= n_cols]
+        if not rows:
+            continue
+        t_secs = [_parse_vbo_time(parts[time_idx]) for parts in rows]
+        if t0 is None:
+            t0 = t_secs[0]
+        t_rel = np.asarray(t_secs, dtype=np.float64) - t0
+        t_rel[t_rel < 0] += 86400.0  # Handle midnight wrapping
+        for out_name, sources in groups.items():
+            best = None
+            best_valid = None
+            for idx, is_latlon, is_lon, factor in sources:
+                cells = [parts[idx] for parts in rows]
+                if is_latlon:
+                    # Never raises (0.0 fallback): always valid, like legacy.
+                    arr = np.array(
+                        [_parse_vbo_latlon(cell, is_lon=is_lon) for cell in cells],
+                        dtype=np.float64,
+                    )
+                    valid = np.ones(len(rows), dtype=bool)
+                else:
+                    arr, valid = _safe_float_column(cells)
+                    arr = arr * factor
+                if best is None:
+                    best, best_valid = arr, valid
+                else:
+                    # Later columns win, but only where they parsed.
+                    best = np.where(valid, arr, best)
+                    best_valid = best_valid | valid
+            ts_buf, val_buf = buffers[out_name]
+            ts_buf.append(t_rel[best_valid])
+            val_buf.append(best[best_valid])
+
+    for out_name, (ts_parts, val_parts) in buffers.items():
+        if ts_parts and out_name in data_log.channels:
+            data_log.channels[out_name].set_samples(
+                np.concatenate(ts_parts), np.concatenate(val_parts),
+            )

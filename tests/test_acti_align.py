@@ -214,6 +214,145 @@ def test_best_lap_bounds_skips_short_in_lap():
     assert (s, e) == (n1, n1 + n2)
 
 
+def test_all_lap_bounds_interpolates_reset_crossing():
+    """Lap durations use the ms-precise timer, not the 20 Hz sample grid."""
+    freq = 20.0
+    # True crossings at 19.97 / 39.94 / 59.91: each reset falls between two
+    # samples, so the grid durations (20.00) would be off by tens of ms.
+    crossings = [19.97, 39.94, 59.91]
+    n = 1250
+    t = np.arange(n) / freq
+
+    def _prev(ti):
+        past = [c for c in crossings if c <= ti]
+        return past[-1] if past else crossings[0] - 20.0
+
+    lt = np.array([ti - _prev(ti) for ti in t])
+
+    class _Ch:
+        def __init__(self, name, data, freq=freq):
+            self.name = name
+            self.data = np.asarray(data, dtype=float)
+            self.freq = freq
+
+    class _Ld:
+        channs: list
+
+    ld = _Ld()
+    ld.channs = [_Ch("Lap Time", lt)]
+    groups, resets = acti_parser._all_lap_bounds(ld)
+    assert len(groups) == 4  # out + 2 timed + in
+    durs = [g[0] for g in groups]
+    assert abs(durs[0] - 19.97) < 0.005
+    assert abs(durs[1] - 19.97) < 0.005
+    assert abs(durs[2] - 19.97) < 0.005
+    assert abs(durs[3] - (62.5 - 59.91)) < 0.005
+    # Only true reset crossings become beacons: no marker at log start
+    # (mid-lap) or file end (truncated lap), so i2 shows Out/Lap/In rows
+    # with no phantom zero-length lap shifting the numbers by one.
+    assert list(resets) == pytest.approx([19.97, 39.94, 59.91], abs=0.005)
+    info = acti_parser._build_laps_info(groups, freq, resets)
+    assert abs(info["laps"][1]["duration"] - 19.97) < 0.005
+    beacons = [b[0] for b in info["beacons"]]
+    assert beacons == pytest.approx([19.97, 39.94, 59.91], abs=0.005)
+
+
+def test_all_lap_bounds_prefers_official_last_lap_time():
+    """Completed laps use the game's official Last Lap Time (0 ms), not interp."""
+    freq = 20.0
+    crossings = [19.97, 39.94, 59.91]
+    n = 1250
+    t = np.arange(n) / freq
+
+    def _prev(ti):
+        past = [c for c in crossings if c <= ti]
+        return past[-1] if past else crossings[0] - 20.0
+
+    lt = np.array([ti - _prev(ti) for ti in t])
+    # Official times latched at each reset, observed during the next group.
+    # Deliberately off the interpolated 19.97 to prove the snap.
+    last = np.zeros(n)
+    last[799:1199] = 19.9
+    last[1199:] = 19.85
+
+    class _Ch:
+        def __init__(self, name, data, freq=freq):
+            self.name = name
+            self.data = np.asarray(data, dtype=float)
+            self.freq = freq
+
+    class _Ld:
+        channs: list
+
+    ld = _Ld()
+    ld.channs = [_Ch("Lap Time", lt), _Ch("Last Lap Time", last)]
+    groups, resets = acti_parser._all_lap_bounds(ld)
+    durs = [g[0] for g in groups]
+    assert durs[0] == pytest.approx(19.97, abs=0.005)  # out lap: interp
+    assert durs[1] == pytest.approx(19.9, abs=1e-9)  # official
+    assert durs[2] == pytest.approx(19.85, abs=1e-9)  # official
+    assert list(resets) == pytest.approx([19.97, 39.87, 59.72], abs=0.005)
+    info = acti_parser._build_laps_info(groups, freq, resets)
+    assert info["fastest_time"] == pytest.approx(19.85, abs=1e-9)
+    assert [b[0] for b in info["beacons"]] == pytest.approx(
+        [19.97, 39.87, 59.72], abs=0.005)
+
+
+def test_all_lap_bounds_ignores_wild_official_time():
+    """A garbage Last Lap Time falls back to interpolation, never corrupts."""
+
+    class _Ch:
+        def __init__(self, name, data, freq=20.0):
+            self.name = name
+            self.data = np.asarray(data, dtype=float)
+            self.freq = freq
+
+    class _Ld:
+        channs: list
+
+    n = 800
+    t = np.arange(n) / 20.0
+    lt = np.tile(np.linspace(0, 20, 400), 2)
+    last = np.zeros(n)
+    last[400:] = 999.0  # stale garbage, far from the ~20 s interpolated lap
+    ld = _Ld()
+    ld.channs = [_Ch("Lap Time", lt), _Ch("Last Lap Time", last)]
+    groups, resets = acti_parser._all_lap_bounds(ld)
+    assert [g[0] for g in groups] == pytest.approx([20.0, 20.0], abs=1e-9)
+    assert list(resets) == pytest.approx([20.0], abs=1e-9)
+
+
+def test_all_lap_bounds_falls_back_on_non_timer_values():
+    """An implausible post-reset value keeps the grid duration, never NaN."""
+
+    class _Ch:
+        def __init__(self, name, data, freq=20.0):
+            self.name = name
+            self.data = np.asarray(data, dtype=float)
+            self.freq = freq
+
+    class _Ld:
+        channs: list
+
+    # Drop from 100 to 50 looks like a reset edge, but 50 s is not a
+    # plausible "time since reset" at 20 Hz -> fall back to sample count.
+    lt = np.concatenate([np.linspace(0, 100, 2000), np.linspace(50, 130, 1600)])
+    ld = _Ld()
+    ld.channs = [_Ch("Lap Time", lt)]
+    groups, resets = acti_parser._all_lap_bounds(ld)
+    assert len(groups) == 2
+    assert abs(groups[0][0] - 100.0) < 1e-9
+    assert abs(groups[1][0] - 80.0) < 1e-9
+    assert list(resets) == pytest.approx([100.0], abs=1e-9)
+
+
+def test_shipped_bidirectional_markers():
+    """Only tracks run in both directions take _cw/_ccw (thill west, buttonwillow)."""
+    assert acti_parser.ACTI_TRACK_PROFILES["thunderhill_west"].get("bidirectional") is True
+    assert acti_parser.ACTI_TRACK_PROFILES["buttonwillow_1a_ccw"].get("bidirectional") is True
+    assert not acti_parser.ACTI_TRACK_PROFILES["sonoma"].get("bidirectional", False)
+
+
 def test_cli_registers_acti():
     from track_telemetry_converter.cli import _BATCH_TYPE_EXTENSIONS, build_parser
 

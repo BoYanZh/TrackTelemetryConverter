@@ -121,6 +121,65 @@ def parse_gear_ratio_thresholds(value):
     return thresholds
 
 
+def _direction_suffix_candidate_sets(args, out_base, ld_filename, output_targets):
+    """Both _cw/_ccw output sets, or None when the suffix won't apply.
+
+    Mirrors ``_maybe_apply_direction_suffix`` naming (minus its guard/print
+    side effects) so the incremental path can skip before parsing: direction
+    is content-derived, so a complete previous set means this exact file was
+    already converted.
+    """
+    if not getattr(args, "direction_suffix", False):
+        return None
+    if out_base is None and getattr(args, "output", None) \
+            and not getattr(args, "_batch_mode", False):
+        return None  # explicit --output keeps the user filename (suffix ignored)
+    stem, _ext = os.path.splitext(ld_filename)
+    if stem.endswith("_cw") or stem.endswith("_ccw"):
+        return None
+    return [
+        [
+            (f"{stem}_{direction}" + target[len(stem):])
+            if target.startswith(stem) else target
+            for target in output_targets
+        ]
+        for direction in ("cw", "ccw")
+    ]
+
+
+def _raise_if_direction_outputs_exist(args, out_base, ld_filename, output_targets):
+    """Skip-before-parse for --direction-suffix reruns.
+
+    The existing guard only sees the unsuffixed names, so reruns fully parse
+    every file just to discover the suffixed outputs already exist. When a
+    complete _cw or _ccw set from a previous run is present, raise the same
+    FileExistsError the post-parse guard would raise.
+    """
+    if getattr(args, "force", False):
+        return
+    candidate_sets = _direction_suffix_candidate_sets(
+        args, out_base, ld_filename, output_targets,
+    )
+    if not candidate_sets:
+        return
+    for candidates in candidate_sets:
+        if candidates and all(os.path.exists(path) for path in candidates):
+            raise FileExistsError(
+                f"output already exists: {candidates[0]}; pass --force to replace it",
+            )
+    # The plain (unsuffixed) guard is deferred to post-parse when
+    # --direction-suffix uses default naming, so directionless files (no GPS
+    # heading: suffix never applies) re-parse every rerun. A complete
+    # unsuffixed set means the file already converted exactly as a rerun
+    # would. Caveat: the single transitional run that first ENABLES
+    # --direction-suffix needs --force, otherwise files that only have
+    # legacy unsuffixed outputs keep them instead of gaining _cw/_ccw twins.
+    if output_targets and all(os.path.exists(path) for path in output_targets):
+        raise FileExistsError(
+            f"output already exists: {output_targets[0]}; pass --force to replace it",
+        )
+
+
 def _output_paths(args, out_base):
     if out_base:
         ld_filename = os.path.splitext(out_base)[0] + ".ld"
@@ -244,6 +303,21 @@ def _resolve_process_args(args, stint_override=None, output_override=None,
     return stint_arg, out_base, target_session
 
 
+def _direction_suffix_applies(active_type, data_log):
+    """Whether --direction-suffix may rename this conversion.
+
+    ACTI tracks only take ``_cw``/``_ccw`` when their resolved profile is
+    marked bidirectional (shipped: thunderhill_west, buttonwillow_1a_ccw;
+    custom anchors can set it; thunderhill_auto follows the resolved
+    layout). Single-direction tracks such as sonoma keep plain names even
+    with the flag. Other input types keep the flag's generic GPS-heading
+    behavior.
+    """
+    if active_type != "ACTI":
+        return True
+    return bool(getattr(data_log, "metadata", {}).get("acti_bidirectional", False))
+
+
 def _detect_process_type(args):
     """Determine the active log type (AUTO detection included)."""
     active_type = args.log_type
@@ -260,13 +334,22 @@ def _fanout_rcz_stints(args, active_type, stint_arg, target_session, out_base):
     """Export each RCZ stint via recursion; return file list or None."""
     if active_type != "RCZ" or str(stint_arg).lower() != "all":
         return None
-    try:
-        stints = get_rcz_stints(args.log, target_session=target_session)
-    except Exception as e:
-        print(f"Warning: Failed checking stints, falling back to default export: {e}")
-        return None
-    if len(stints) <= 1:
-        return None
+    cached = getattr(args, "_rcz_sessions", None)
+    if cached:
+        selected = next(
+            (s for s in cached if s.session_id == target_session), None,
+        )
+        stints = list(selected.stints) if selected else []
+        if len(stints) <= 1:
+            return None
+    else:
+        try:
+            stints = get_rcz_stints(args.log, target_session=target_session)
+        except Exception as e:
+            print(f"Warning: Failed checking stints, falling back to default export: {e}")
+            return None
+        if len(stints) <= 1:
+            return None
     print(f"Auto-detected {len(stints)} stints in RCZ log: {stints}")
     base_output = out_base if out_base else args.log
     base_name, _ = os.path.splitext(base_output)
@@ -436,8 +519,8 @@ def _detect_gps_venue(data_log):
     lon_ch = channels.get(CH_GPS_LONGITUDE)
     if lat_ch is None or lon_ch is None:
         return ""
-    lats = [m.value for m in lat_ch.messages]
-    lons = [m.value for m in lon_ch.messages]
+    lats = lat_ch.values.tolist()
+    lons = lon_ch.values.tolist()
     return detect_venue_from_gps(lats, lons)
 
 
@@ -597,6 +680,7 @@ def process_one_file(args, stint_override=None, output_override=None,
             force=getattr(args, "force", False),
             source_path=args.log,
         )
+    _raise_if_direction_outputs_exist(args, out_base, ld_filename, output_targets)
 
     data_log = DataLog()
     _extract_log_data(args, active_type, data_log, stint_arg, target_session)
@@ -623,13 +707,18 @@ def process_one_file(args, stint_override=None, output_override=None,
 
     direction, total = None, 0.0
     if getattr(args, "direction_suffix", False):
-        direction, total = _detect_track_direction(data_log)
-        if direction is None:
-            print("WARNING: --direction-suffix skipped: no usable GPS Heading "
-                  "(no GPS data or indeterminate direction)")
-        elif getattr(args, "venue_name", ""):
-            print("WARNING: --direction-suffix venue ignored: --venue_name is explicit; "
-                  "keeping user value")
+        if not _direction_suffix_applies(active_type, data_log):
+            track = getattr(data_log, "metadata", {}).get("acti_track", active_type)
+            print(f"direction suffix not applicable to '{track}'; keeping plain names "
+                  "(only bidirectional tracks such as thunderhill_west take _cw/_ccw)")
+        else:
+            direction, total = _detect_track_direction(data_log)
+            if direction is None:
+                print("WARNING: --direction-suffix skipped: no usable GPS Heading "
+                      "(no GPS data or indeterminate direction)")
+            elif getattr(args, "venue_name", ""):
+                print("WARNING: --direction-suffix venue ignored: --venue_name is explicit; "
+                      "keeping user value")
 
     motec_log = _build_motec_log(args, data_log, direction=direction)
 
@@ -704,7 +793,11 @@ def build_parser():
                         help="Opt-in: append _cw/_ccw track-direction suffix to output names "
                              "and ' CW'/' CCW' to the venue (from GPS-heading winding; "
                              "default filenames only, explicit --output/--venue_name "
-                             "keep their values)")
+                             "keep their values). For ACTI input the suffix only applies "
+                             "to bidirectional track profiles (thunderhill_west, "
+                             "buttonwillow_1a_ccw, or custom anchors with "
+                             "\"bidirectional\": true); single-direction tracks such as "
+                             "sonoma keep plain names")
 
     parser.add_argument("--lap", type=str, default="all",
                         help="Reconstructed lap number within the selected stint, or 'all' (default: all)")
@@ -992,6 +1085,8 @@ def _batch_prepare_file(args, fpath, expand_backups, output_dir, skipped, failed
         except Exception as exc:
             failed.append(fpath)
             return (file_args, detected, f"ERROR: Failed to inspect RCZ archive: {exc}")
+        # Stash for the worker: single zip open per file (see _convert_single_input).
+        file_args._rcz_sessions = backup_sessions
         if backup_sessions:
             if not expand_backups:
                 skipped.append((fpath, "backup archive (use --session all)"))
@@ -1145,11 +1240,16 @@ def _convert_single_input(args):
         return 1
 
     if args.log_type == "RCZ":
-        try:
-            backup_sessions = discover_rcz_sessions(args.log)
-        except (OSError, ValueError, zipfile.BadZipFile) as exc:
-            print(f"ERROR: Failed to inspect RCZ archive: {exc}")
-            return 1
+        cached = getattr(args, "_rcz_sessions", None)
+        if cached is None:
+            try:
+                cached = discover_rcz_sessions(args.log)
+            except (OSError, ValueError, zipfile.BadZipFile) as exc:
+                print(f"ERROR: Failed to inspect RCZ archive: {exc}")
+                return 1
+        # Share with process_one_file/_fanout so the archive is opened once.
+        args._rcz_sessions = cached
+        backup_sessions = cached
         if args.list_sessions:
             if not backup_sessions:
                 print("This RCZ contains one root session; --list-sessions is for backup archives.")
