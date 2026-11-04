@@ -180,6 +180,8 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
                     # Later columns win, but only where they parsed.
                     best = np.where(valid, arr, best)
                     best_valid = best_valid | valid
+            if best is None or best_valid is None:
+                continue  # No source columns for this channel; nothing to store.
             ts_buf, val_buf = buffers[out_name]
             ts_buf.append(t_rel[best_valid])
             val_buf.append(best[best_valid])

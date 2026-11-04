@@ -194,7 +194,7 @@ def build_parser():
                              "keep their values). For ACTI input the suffix only applies "
                              "to bidirectional track profiles (thunderhill_west, "
                              "buttonwillow_1a_ccw, or custom anchors with "
-                             "\"bidirectional\": true); single-direction tracks such as "
+                             '"bidirectional": true); single-direction tracks such as '
                              "sonoma keep plain names")
 
     parser.add_argument("--lap", type=str, default="all",

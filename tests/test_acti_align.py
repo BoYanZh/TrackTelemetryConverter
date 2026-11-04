@@ -358,7 +358,6 @@ def test_all_lap_bounds_ignores_wild_official_time():
         channs: list
 
     n = 800
-    t = np.arange(n) / 20.0
     lt = np.tile(np.linspace(0, 20, 400), 2)
     last = np.zeros(n)
     last[400:] = 999.0  # stale garbage, far from the ~20 s interpolated lap

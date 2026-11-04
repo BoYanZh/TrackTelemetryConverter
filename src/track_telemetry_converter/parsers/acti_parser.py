@@ -566,7 +566,7 @@ def _build_laps_info(groups, freq, resets=None):
         )
     if resets is None:
         beacons = []
-        for k, item in enumerate(groups):
+        for item in groups:
             dur, s, e = item[0], item[1], item[2]
             if len(item) >= 5:
                 start_s, end_s = float(item[3]), float(item[4])
