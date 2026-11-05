@@ -338,12 +338,18 @@ RCZ_PID_MAP = {
 
 # ----------------------------------------------------------------------------
 # Track Start/Finish Beacons Coordinate Database
+# NOTE (2026-11-05): the two East entries were re-surveyed from real data --
+# saurabh thill_east_20260920 AiM lap boundaries at (39.53848, -122.33125),
+# crossing heading ~179 deg, cross-checked against the ACTI east-loop timing
+# line 63 m up-track on the same straight. The old shared front-straight
+# value (39.537866, -122.334007, hdg 93) is kept for West / 5 Mile layouts,
+# which were not re-measured. Cyclone shares the Bypass S/F (unverified).
 # ----------------------------------------------------------------------------
 TRACK_BEACONS = {
     "WeatherTech Raceway Laguna Seca": {"lat": 36.58620173, "lon": -121.75661697, "heading_deg": 218.45, "name": "Start/Finish"},
     "Sonoma Raceway": {"lat": 38.16146533, "lon": -122.45478067, "heading_deg": 309.0, "name": "Start/Finish"},
-    "Thunderhill East Bypass": {"lat": 39.53786600, "lon": -122.33400700, "heading_deg": 93.0, "name": "Start/Finish"},
-    "Thunderhill East Cyclone": {"lat": 39.53786600, "lon": -122.33400700, "heading_deg": 93.0, "name": "Start/Finish"},
+    "Thunderhill East Bypass": {"lat": 39.53848200, "lon": -122.33124700, "heading_deg": 179.0, "name": "Start/Finish"},
+    "Thunderhill East Cyclone": {"lat": 39.53848200, "lon": -122.33124700, "heading_deg": 179.0, "name": "Start/Finish"},
     "Thunderhill West": {"lat": 39.53786600, "lon": -122.33400700, "heading_deg": 93.0, "name": "Start/Finish"},
     "Thunderhill 5 Mile Double Bypass": {"lat": 39.53786600, "lon": -122.33400700, "heading_deg": 93.0, "name": "Start/Finish"},
     "Thunderhill 5 Mile Bypass": {"lat": 39.53786600, "lon": -122.33400700, "heading_deg": 93.0, "name": "Start/Finish"},
