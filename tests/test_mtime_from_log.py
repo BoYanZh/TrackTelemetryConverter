@@ -90,7 +90,9 @@ def test_log_end_epoch_origin_and_datetime():
     log = _log_with_samples([0.0, 60.0])
     log.datetime = datetime.datetime(2026, 5, 15, 0, 0, 0)
     expected = log.datetime.timestamp() + 60.0
-    assert abs(_log_end_epoch_sec(log) - expected) < 1e-6
+    end = _log_end_epoch_sec(log)
+    assert end is not None
+    assert abs(end - expected) < 1e-6
 
 
 def test_log_end_epoch_without_wall_clock():

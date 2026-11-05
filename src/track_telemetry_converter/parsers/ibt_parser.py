@@ -86,8 +86,9 @@ def _parse_filename_start(ibt_file_path):
     )
     if not match:
         return None
+    year, month, day, hour, minute, second = (int(g) for g in match.groups())
     try:
-        return _dt.datetime(*map(int, match.groups()))
+        return _dt.datetime(year, month, day, hour, minute, second)
     except ValueError:
         return None
 
