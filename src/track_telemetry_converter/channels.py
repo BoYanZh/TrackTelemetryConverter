@@ -343,13 +343,17 @@ RCZ_PID_MAP = {
 # AiM lap boundaries, cross-checked against the ACTI east-loop timing line
 # 63 m up-track. West (39.537464, -122.338729, hdg 354) from three 86DC West
 # logs (20220416/20220917/20221016) plus the ACTI west-loop timing line, all
-# within ~4 m. The old shared front-straight gantry value (39.537866,
-# -122.334007, hdg 93) is kept for the 5 Mile layouts, which were not
-# re-measured. Cyclone shares the Bypass S/F (unverified).
+# within ~4 m. Laguna Seca (36.586490, -121.756675, hdg 213) from saurabh
+# laguna_20260314 AiM boundaries, within ~2 m of the ACTI laguna timing
+# line. Sonoma (38.161575, -122.454650, hdg 309) from saurabh sonoma_20260509
+# AiM boundaries, within ~4 m of the ACTI sonoma timing line. The old
+# front-straight gantry value (39.537866, -122.334007, hdg 93) is kept for
+# the 5 Mile layouts, which were not re-measured. Cyclone shares the Bypass
+# S/F (unverified).
 # ----------------------------------------------------------------------------
 TRACK_BEACONS = {
-    "WeatherTech Raceway Laguna Seca": {"lat": 36.58620173, "lon": -121.75661697, "heading_deg": 218.45, "name": "Start/Finish"},
-    "Sonoma Raceway": {"lat": 38.16146533, "lon": -122.45478067, "heading_deg": 309.0, "name": "Start/Finish"},
+    "WeatherTech Raceway Laguna Seca": {"lat": 36.58649000, "lon": -121.75667500, "heading_deg": 213.0, "name": "Start/Finish"},
+    "Sonoma Raceway": {"lat": 38.16157500, "lon": -122.45465000, "heading_deg": 309.0, "name": "Start/Finish"},
     "Thunderhill East Bypass": {"lat": 39.53848200, "lon": -122.33124700, "heading_deg": 179.0, "name": "Start/Finish"},
     "Thunderhill East Cyclone": {"lat": 39.53848200, "lon": -122.33124700, "heading_deg": 179.0, "name": "Start/Finish"},
     "Thunderhill West": {"lat": 39.53746400, "lon": -122.33872900, "heading_deg": 354.0, "name": "Start/Finish"},

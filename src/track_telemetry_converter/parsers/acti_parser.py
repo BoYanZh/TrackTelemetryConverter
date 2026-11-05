@@ -649,6 +649,14 @@ def _merge_profiles(anchors):
     return profiles
 
 
+# Merge window for --realign-sf: an AC reset this far (or nearer) from a GPS
+# Start/Finish crossing is the same lap boundary seen from two lines, so the
+# GPS time wins; a reset farther away is a genuine crossing the GPS detector
+# gated out (first 15 s / last 5 s of file) and is kept. Half of
+# detect_beacons' min_lap_sec, far below any real lap duration.
+_REALIGN_MERGE_SEC = 20.0
+
+
 def _realign_groups_to_real_sf(data_log, groups, resets, duration):
     """Re-cut ACTI segments at the real-world Start/Finish line.
 
@@ -658,20 +666,30 @@ def _realign_groups_to_real_sf(data_log, groups, resets, duration):
     ``Start/Finish`` trap, rebuild the segments from those crossings so
     sim laps align corner-for-corner with real logs.
 
-    Returns ``(groups, resets)`` rebuilt from the crossings, or the inputs
-    unchanged when no usable real line exists: unknown venue, sector-style
-    trap lists (e.g. CA-9, whose traps are not named Start/Finish), or no
-    crossing detected (wrong direction, recording never reaches the line).
-    Rebuilt segments keep the ``(duration, 0, 0, t_start, t_end)`` shape
-    that :func:`_build_laps_info` accepts.
+    Returns ``(groups, resets)`` rebuilt from the merged boundaries, or the
+    inputs unchanged when no usable real line exists: unknown venue,
+    sector-style trap lists (e.g. CA-9, whose traps are not named
+    Start/Finish), or no crossing detected (wrong direction, recording
+    never reaches the line). An AC reset with no GPS crossing within
+    ``_REALIGN_MERGE_SEC`` keeps its sim value: the GPS detector gates out
+    crossings in the first 15 s and last 5 s of the file, and a reset there
+    is still a genuine line crossing, not a phantom. Rebuilt segments keep
+    the ``(duration, 0, 0, t_start, t_end)`` shape that
+    :func:`_build_laps_info` accepts.
     """
     try:
         found = [t for t, name in data_log.detect_beacons() if name == "Start/Finish"]
     except (ValueError, TypeError, AttributeError):
         return groups, resets
-    crossings = sorted(t for t in found if 0.0 < t < duration)
-    if not crossings:
+    found = sorted(t for t in found if 0.0 < t < duration)
+    if not found:
         return groups, resets
+    keep = [
+        float(r)
+        for r in resets
+        if not any(abs(float(r) - c) <= _REALIGN_MERGE_SEC for c in found)
+    ]
+    crossings = sorted(found + [k for k in keep if 0.0 < k < duration])
     bounds = [0.0] + crossings + [duration]
     segs = [(b - a, 0, 0, a, b) for a, b in zip(bounds, bounds[1:], strict=False) if b - a > 0]
     if not segs:
