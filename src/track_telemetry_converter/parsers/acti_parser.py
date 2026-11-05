@@ -552,7 +552,7 @@ def _opening_group_is_complete_lap(data_log, t_end_first, dur_first):
         return False
     i1 = int(np.argmin(np.abs(t_v - t_end_first)))
     dist_m = np.sqrt(
-        ((lat_v[0] - lat_v[i1]) * 111000.0) ** 2 + ((lon_v[0] - lon_v[i1]) * 85670.0) ** 2
+        ((lat_v[0] - lat_v[i1]) * 111000.0) ** 2 + ((lon_v[0] - lon_v[i1]) * 85670.0) ** 2,
     )
     if not np.isfinite(dist_m) or dist_m > 150.0:
         return False
