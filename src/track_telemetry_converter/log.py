@@ -456,9 +456,9 @@ class DataLog:
         from .parsers.xrk_parser import parse_xrk_log
         parse_xrk_log(self, xrk_file_path, target_lap=target_lap)
 
-    def from_acti_log(self, acti_file_path, target_lap=None, track=None, anchors=None):
+    def from_acti_log(self, acti_file_path, target_lap=None, track=None, anchors=None, realign_sf=False):
         from .parsers.acti_parser import parse_acti_log
-        parse_acti_log(self, acti_file_path, target_lap=target_lap, track=track, anchors=anchors)
+        parse_acti_log(self, acti_file_path, target_lap=target_lap, track=track, anchors=anchors, realign_sf=realign_sf)
 
     def from_motec_ld_log(self, ld_file_path, target_lap=None, min_lap_sec=15.0):
         from .parsers.motec_ld_parser import parse_motec_ld_log

@@ -467,3 +467,80 @@ def test_parse_acti_log_prefers_recorded_accelerator_over_mirror(tmp_path):
     out = DataLog()
     out.from_acti_log(src, track="test_loop", anchors=_anchors())
     np.testing.assert_allclose(out.channels["Accelerator Pos"].values, np.full(n, 42.0))
+
+
+def _write_realign_synthetic_ld(path, venue_name="Thunderhill East Bypass test", freq=20.0):
+    """ACTI-shaped .ld whose sim resets (t=10/30 s) miss the real S/F (t=20 s).
+
+    The Car Coord trace drives due south through the real Thunderhill East
+    Start/Finish trap at 50 m/s, crossing it at t=20 s, while the Lap Time
+    channel resets at t=10 s and t=30 s like a mod timing line ~63 m off.
+    """
+    from track_telemetry_converter.channels import TRACK_BEACONS
+
+    sf = TRACK_BEACONS["Thunderhill East Bypass"]
+    n = int(40 * freq)
+    t = np.arange(n) / freq
+    speed_ms = 50.0
+    # y runs +1000 m -> -1000 m so y_real crosses 0 (the beacon) at t=20 s.
+    y = 1000.0 - speed_ms * t
+    log = DataLog()
+    log.add_channel("Car Coord X", "m", float, 3)
+    log.channels["Car Coord X"].set_samples(t, np.zeros(n))
+    log.add_channel("Car Coord Y", "m", float, 3)
+    log.channels["Car Coord Y"].set_samples(t, y)
+    log.add_channel("Ground Speed", "km/h", float, 2)
+    log.channels["Ground Speed"].set_samples(t, np.full(n, speed_ms * 3.6))
+    lt = np.where(t < 10, t, np.where(t < 30, t - 10, t - 30))
+    log.add_channel("Lap Time", "s", float, 3)
+    log.channels["Lap Time"].set_samples(t, lt)
+    log.add_channel("Throttle Pos", "%", float, 1)
+    log.channels["Throttle Pos"].set_samples(t, np.full(n, 100.0))
+    ml = MotecLog()
+    ml.initialize()
+    ml.add_all_channels(log)
+    ml.write(path)
+    return {
+        "test_east": {
+            "name": venue_name,
+            "ref_lat": sf["lat"],
+            "ref_lon": sf["lon"],
+            "theta_deg": 0.0,
+            "dx_m": 0.0,
+            "dy_m": 0.0,
+        },
+    }
+
+
+def test_parse_acti_log_realign_sf_cuts_at_real_line(tmp_path):
+    src = str(tmp_path / "acti.ld")
+    anchors = _write_realign_synthetic_ld(src)
+    out = DataLog()
+    out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
+    beacons = [b[0] for b in out.laps_info["beacons"]]
+    assert beacons[0] == 0.0
+    assert len(beacons) == 2
+    assert abs(beacons[1] - 20.0) < 0.1
+    laps = out.laps_info["laps"]
+    assert len(laps) == 2
+    assert laps[0]["type"] == "Out Lap"
+    assert abs(laps[0]["end_time"] - beacons[1]) < 1e-9
+    assert abs(laps[1]["start_time"] - beacons[1]) < 1e-9
+
+
+def test_parse_acti_log_realign_sf_off_keeps_sim_cuts(tmp_path):
+    src = str(tmp_path / "acti.ld")
+    anchors = _write_realign_synthetic_ld(src)
+    out = DataLog()
+    out.from_acti_log(src, track="test_east", anchors=anchors)
+    beacons = [b[0] for b in out.laps_info["beacons"]]
+    assert beacons == pytest.approx([0.0, 10.0, 30.0], abs=0.1)
+
+
+def test_parse_acti_log_realign_sf_falls_back_without_real_line(tmp_path):
+    src = str(tmp_path / "acti.ld")
+    anchors = _write_realign_synthetic_ld(src, venue_name="Test Loop")
+    out = DataLog()
+    out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
+    beacons = [b[0] for b in out.laps_info["beacons"]]
+    assert beacons == pytest.approx([0.0, 10.0, 30.0], abs=0.1)

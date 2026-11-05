@@ -190,6 +190,15 @@ def build_parser():
                              "(east X max +368 m, west X min +502 m; works per file in batch mode)")
     parser.add_argument("--anchor", type=str, default="",
                         help="JSON file with custom ACTI track profiles merged over the built-in table")
+    parser.add_argument("--realign-sf", action="store_true", default=False,
+                        dest="realign_sf",
+                        help="ACTI only: re-cut laps at the real-world Start/Finish line "
+                             "(from the transformed GPS trace) instead of the sim's own "
+                             "timing line, so sim laps align corner-for-corner with real "
+                             "logs. Falls back to the sim cuts when no real crossing is "
+                             "detected (unknown venue, sector-style traps, wrong "
+                             "direction). Default off; convert_all.ps1 enables it for "
+                             "the ACTI phase")
     parser.add_argument("--direction-suffix", action="store_true", default=False,
                         dest="direction_suffix",
                         help="Opt-in: append _cw/_ccw track-direction suffix to output names "

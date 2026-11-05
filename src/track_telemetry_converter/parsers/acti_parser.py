@@ -649,12 +649,45 @@ def _merge_profiles(anchors):
     return profiles
 
 
-def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None):
+def _realign_groups_to_real_sf(data_log, groups, resets, duration):
+    """Re-cut ACTI segments at the real-world Start/Finish line.
+
+    The sim's Lap Time resets fire at the mod's own timing line, which can
+    sit metres away from the physical start lights (Thunderhill East is
+    ~63 m / ~1.25 s off). When the transformed GPS trace crosses a known
+    ``Start/Finish`` trap, rebuild the segments from those crossings so
+    sim laps align corner-for-corner with real logs.
+
+    Returns ``(groups, resets)`` rebuilt from the crossings, or the inputs
+    unchanged when no usable real line exists: unknown venue, sector-style
+    trap lists (e.g. CA-9, whose traps are not named Start/Finish), or no
+    crossing detected (wrong direction, recording never reaches the line).
+    Rebuilt segments keep the ``(duration, 0, 0, t_start, t_end)`` shape
+    that :func:`_build_laps_info` accepts.
+    """
+    try:
+        found = [t for t, name in data_log.detect_beacons() if name == "Start/Finish"]
+    except (ValueError, TypeError, AttributeError):
+        return groups, resets
+    crossings = sorted(t for t in found if 0.0 < t < duration)
+    if not crossings:
+        return groups, resets
+    bounds = [0.0] + crossings + [duration]
+    segs = [(b - a, 0, 0, a, b) for a, b in zip(bounds, bounds[1:], strict=False) if b - a > 0]
+    if not segs:
+        return groups, resets
+    return segs, crossings
+
+
+def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None, realign_sf=False):
     """Populate channels from an Assetto Corsa ACTI .ld file.
 
     Car Coord X/Y place the trajectory through the track profile; GPS
     Latitude/Longitude/Heading are synthesised. ``track`` selects the profile
     explicitly, otherwise the filename must match one unambiguously.
+    ``realign_sf`` re-cuts laps at the real-world Start/Finish line (from
+    the transformed GPS trace) instead of the sim's own timing line,
+    falling back to the sim cuts when no real crossing is detected.
     """
     data_log.clear()
     data_log.laps_info = {}
@@ -764,7 +797,10 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
     data_log.add_channel(CH_GPS_HEADING, "deg", float, 3)
     data_log.channels[CH_GPS_HEADING].set_samples(t_gps, np.asarray(heading, dtype=float))
 
-    groups, _ = _all_lap_bounds(ld)
+    groups, resets = _all_lap_bounds(ld)
+    data_log.metadata["venue_name"] = cfg.get("name", "")
+    if realign_sf and groups:
+        groups, resets = _realign_groups_to_real_sf(data_log, groups, resets, data_log.duration())
     if groups:
         lap_ids = np.zeros(len(t_gps))
         for k, item in enumerate(groups):
@@ -784,7 +820,6 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         data_log.add_channel(CH_LAP_NUMBER, "", int, 0)
         data_log.channels[CH_LAP_NUMBER].set_samples(t_gps, np.ones(len(t_gps)))
 
-    data_log.metadata["venue_name"] = cfg.get("name", "")
     data_log.metadata["driver"] = getattr(ld.head, "driver", "")
     data_log.metadata["vehicle_id"] = getattr(ld.head, "vehicleid", "")
     # Resolved profile key + direction relevance for the CLI: only
@@ -805,7 +840,6 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         else:
             data_log.datetime_utc = head_dt.astimezone(datetime.timezone.utc)
 
-    groups, resets = _all_lap_bounds(ld)
     if groups:
         laps_info = _build_laps_info(groups, fx, resets)
     else:

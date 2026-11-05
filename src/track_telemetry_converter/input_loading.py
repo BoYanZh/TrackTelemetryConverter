@@ -113,6 +113,7 @@ def extract_log_data(args, active_type, data_log, stint_arg, target_session, *, 
             target_lap=args.lap,
             track=args.track,
             anchors=profiles,
+            realign_sf=getattr(args, "realign_sf", False),
         )
         return
     if active_type in _TEXT_LOG_READERS:
