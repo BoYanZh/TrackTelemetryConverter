@@ -526,15 +526,58 @@ def calibrate_track(rw_ld_path, acti_ld_path, track_key, track_name=None):
     }
 
 
-def _build_laps_info(groups, freq, resets=None):
-    """laps_info from Lap Time groups: first row is always the Out Lap.
+def _opening_group_is_complete_lap(data_log, t_end_first, dur_first):
+    """Whether the opening ACTI segment is a complete lap, not an out-lap.
 
-    The opening group is the run from recording start (pits or mid-lap)
-    to the first start/finish crossing -- never a timed lap -- so it is
-    typed "Out Lap" unconditionally. Interior full-length groups are
-    timed (>=15 s), the trailing group is the In Lap; short fragments of
-    the trailing edge stay "Partial", guaranteeing the export always
-    carries exactly one Out Lap ahead of lap 1.
+    The sim often starts recording on (or rolling toward) the timing line --
+    e.g. an AC spawn -- so the first logged segment already runs
+    start-line to start-line at full pace and deserves to count as a timed
+    lap (the i2 Out Lap 0:00.000 row comes from the leading 0.0 beacon, not
+    from this segment). A genuine pit-out or mid-lap join stays an Out Lap:
+    the segment must be full-length (>= 15 s), start within 150 m of where
+    it ends (the line), and start rolling (>= 80 km/h over the first 3 s,
+    ruling out pit stalls and standing starts).
+    """
+    if dur_first < 15.0:
+        return False
+    try:
+        lat_v = np.asarray(data_log.channels[CH_GPS_LATITUDE].values, dtype=float)
+        lon_v = np.asarray(data_log.channels[CH_GPS_LONGITUDE].values, dtype=float)
+        t_v = np.asarray(data_log.channels[CH_GPS_LATITUDE].timestamps, dtype=float)
+        spd_v = np.asarray(data_log.channels[CH_GROUND_SPEED].values, dtype=float)
+        spd_t = np.asarray(data_log.channels[CH_GROUND_SPEED].timestamps, dtype=float)
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return False
+    if lat_v.size == 0 or t_v.size == 0 or spd_v.size == 0:
+        return False
+    i1 = int(np.argmin(np.abs(t_v - t_end_first)))
+    dist_m = np.sqrt(
+        ((lat_v[0] - lat_v[i1]) * 111000.0) ** 2 + ((lon_v[0] - lon_v[i1]) * 85670.0) ** 2
+    )
+    if not np.isfinite(dist_m) or dist_m > 150.0:
+        return False
+    early = spd_v[spd_t <= (spd_t[0] + 3.0)]
+    early = early[np.isfinite(early)]
+    if early.size == 0 or float(np.mean(early)) < 80.0:
+        return False
+    return True
+
+
+def _build_laps_info(groups, freq, resets=None, first_timed=False):
+    """laps_info from Lap Time groups: first row is the Out Lap, unless it is
+    a complete lap in disguise.
+
+    The opening group is usually the run from recording start (pits or
+    mid-lap) to the first start/finish crossing -- never a timed lap -- so it
+    is typed "Out Lap" unconditionally. The exception (``first_timed``) is a
+    flying recording start right at the timing line -- e.g. an AC spawn --
+    whose opening segment already runs line-to-line at full pace; that one
+    counts as timed, while the leading 0.0 beacon still renders the i2 Out
+    Lap 0:00.000 row ahead of it. Interior full-length groups are timed
+    (>=15 s), the trailing group is the In Lap; short fragments of the
+    trailing edge stay "Partial". The leading 0.0 beacon always renders the
+    i2 Out Lap 0:00.000 row, so a timed opening segment still sits behind an
+    out-lap row in the lap table.
 
     Group tuples carry interpolated (duration, start, end, t_start, t_end).
     ``resets`` holds the interpolated start/finish crossing times, which
@@ -552,7 +595,7 @@ def _build_laps_info(groups, freq, resets=None):
             start_s = s / freq
             end_s = e / freq
         if k == 0:
-            kind = "Out Lap"
+            kind = "Timed" if (first_timed and dur >= 15.0) else "Out Lap"
         elif k == len(groups) - 1:
             kind = "In Lap" if dur > 15.0 else "Partial"
         else:
@@ -895,7 +938,13 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
             data_log.datetime_utc = head_dt.astimezone(datetime.timezone.utc)
 
     if groups:
-        laps_info = _build_laps_info(groups, fx, resets)
+        first_item = groups[0]
+        if len(first_item) >= 5:
+            first_end = float(first_item[4])
+        else:
+            first_end = first_item[2] / fx
+        first_timed = _opening_group_is_complete_lap(data_log, first_end, float(first_item[0]))
+        laps_info = _build_laps_info(groups, fx, resets, first_timed=first_timed)
     else:
         duration = data_log.duration()
         laps_info = {

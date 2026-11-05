@@ -148,6 +148,20 @@ def test_parse_acti_log_end_to_end(tmp_path):
     np.testing.assert_allclose(np.median(lats), 39.0, atol=0.01)
 
 
+def test_parse_acti_log_flying_start_first_lap_is_timed(tmp_path):
+    """Recording starts on the line at speed: the opening full-length
+    segment counts as a timed lap (the i2 out-lap row comes from the
+    leading 0.0 beacon, not from this segment)."""
+    src = str(tmp_path / "acti.ld")
+    _write_synthetic_ld(src)  # closed 2x20 s loops at 100 km/h from the origin
+    out = DataLog()
+    out.from_acti_log(src, track="test_loop", anchors=_anchors())
+    laps = out.laps_info["laps"]
+    assert [lap["type"] for lap in laps] == ["Timed", "In Lap"]
+    assert abs(out.laps_info["fastest_time"] - 20.0) < 0.5
+    assert out.laps_info["fastest_lap"] == 1
+
+
 def test_parse_acti_log_short_first_group_is_out_lap(tmp_path):
     """A mid-lap recording start still opens with an Out Lap, never Partial."""
     src = str(tmp_path / "acti.ld")
