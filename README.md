@@ -273,6 +273,62 @@ canonical conversions. Native `LapDistPct`, coordinates, and source timestamps
 are available for downstream distance-based comparison. This API does not
 align laps, adjudicate iRacing incident penalties, or provide coaching.
 
+## Native XRK and VBO channels
+
+Both readers accept the same optional raw-channel selector as IBT:
+
+```python
+xrk = DataLog()
+xrk.from_xrk_log("session.xrk", raw_channels="all")  # Also accepts .xrz
+sensor = xrk.raw_channels["Logger Temperature"]
+print(sensor.units, sensor.values.dtype, dict(sensor.provenance))
+print(sensor.timestamps)         # Seconds on the shared session timeline
+print(sensor.source_timestamps)  # Original libxrk timecodes in milliseconds
+
+vbo = DataLog()
+with open("session.vbo", encoding="utf-8") as source:
+    vbo.from_vbo_log(source.readlines(), raw_channels=["velocity", "velocity-calc"])
+```
+
+Omit `raw_channels` to keep the existing canonical selection. Pass `"all"`,
+a single source name, or a list of names to retain additional series in
+`raw_channels`. Missing requested names are omitted. Raw series are read-only
+and do not enter automatic MoTeC export. Neither reader resamples raw values.
+
+For XRK, "raw" means values decoded by **libxrk**, before this converter's
+alias selection, unit conversion, invalid-value removal, sorting, and
+deduplication. It does not mean original packet bytes or uncalibrated sensor
+counts. Unmapped channels and losing aliases remain accessible. Values keep
+their decoded NumPy dtype, NaNs, sample order, and duplicate timestamps.
+`source_timestamps` preserves the per-channel millisecond clock; elapsed
+timestamps retain the shared origin recorded as `time_origin_ms` in provenance.
+`sample_rate` estimates the series rate from unique finite timestamps and is
+not a claim about the sensor's acquisition rate. Unreadable or unsupported
+non-numeric channel tables are skipped. An explicit `target_lap` filters raw
+and canonical samples to the same inclusive lap window.
+
+Unordered XRK raw timestamps are intentional. `get_lap()` and
+`ChannelView.between()` preserve their original order when selecting a window;
+this requires a copy for unordered series. Ordered series use shared array
+slices. Samples with no usable timestamp cannot be located in a time window.
+The regular exported channels retain their sorted, deduplicated behavior.
+
+For VBO, raw values are numeric text parsed as `float64`, before coordinate,
+pressure, or alias transformations. Invalid numeric cells become NaN while
+retaining row alignment; short rows follow the existing parser's skip rule.
+Original cell spelling and non-numeric text are not archived. The source
+clock retains numeric `HHMMSS.fraction` values, alongside the existing elapsed
+timeline and midnight handling. Source units are used only when declared
+unambiguously in the header; unknown units remain empty.
+
+VBO raw keys disambiguate duplicate column names with suffixes such as
+`x_acc-acc#2`; provenance retains the original `raw_name` and zero-based
+`column_index`. Selecting the original name retains all its occurrences;
+selecting a suffixed key selects that column. The column inventory is available
+in `metadata["vbo_raw_columns"]` when raw access is requested. This preserves
+unknown columns and alias losers without changing which canonical source wins.
+VBO still does not infer lap boundaries from arbitrary columns.
+
 ## Project layout
 
 ```text

@@ -5,15 +5,25 @@ Extracted from the original DataLog.vbo_log methods with identical behavior."""
 from __future__ import annotations
 
 import datetime
+import re
+from types import MappingProxyType
 
 import numpy as np
 
 from ..channels import CH_ACCELERATOR_POS, CHANNEL_ALIASES
+from ..lap_view import ChannelView, readonly
 from ..provenance import record_channel_provenance
 
 #: Rows per chunk in the vectorized data pass (bounds the transient
 #: split-string table while keeping numpy conversions amortized).
 _VBO_CHUNK_ROWS = 20_000
+
+_DECLARED_UNITS = {
+    "kmh", "km/h", "kph", "mph", "m/s", "mps", "m", "cm", "mm",
+    "g", "mg", "bar", "kpa", "pa", "psi", "deg", "degree",
+    "degrees", "rad", "rpm", "%", "c", "°c", "f", "°f", "s",
+    "ms", "hz", "v", "volt", "a", "amp", "amps", "n", "nm", "ft",
+}
 
 
 def _safe_float_column(cells):
@@ -62,7 +72,147 @@ def _parse_vbo_time(val_str):
         return 0.0
 
 
-def parse_vbo_log(data_log, log_lines, target_lap=None):
+def _vbo_column_keys(column_names):
+    """Return stable per-column keys while preserving literal source names."""
+    reserved = set(column_names)
+    used = set()
+    counts = {}
+    keys = []
+    for name in column_names:
+        count = counts.get(name, 0) + 1
+        counts[name] = count
+        if count == 1:
+            key = name
+        else:
+            suffix = count
+            key = f"{name}#{suffix}"
+            while key in reserved or key in used:
+                suffix += 1
+                key = f"{name}#{suffix}"
+        keys.append(key)
+        used.add(key)
+    return keys
+
+
+def _vbo_declared_unit(header):
+    """Read a known unit suffix from a VBO [header] line, if declared."""
+    if not header:
+        return ""
+    text = header.strip()
+    bracketed = re.search(r"(?:\(([^()]*)\)|\[([^\[\]]*)\])\s*$", text)
+    candidate = (bracketed.group(1) or bracketed.group(2)).strip() if bracketed else ""
+    if not candidate:
+        parts = text.split()
+        candidate = parts[-1] if len(parts) > 1 else ""
+    return candidate if candidate.casefold() in _DECLARED_UNITS else ""
+
+
+def _selected_vbo_columns(raw_channels, column_names, keys):
+    """Select physical columns, allowing original names to select duplicates."""
+    if raw_channels is None:
+        return ()
+    if isinstance(raw_channels, str):
+        if raw_channels.casefold() == "all":
+            return tuple(range(len(column_names)))
+        requested = {raw_channels}
+    else:
+        try:
+            requested = set(raw_channels)
+        except TypeError as exc:
+            raise TypeError(
+                "raw_channels must be None, 'all', a column name, or an iterable",
+            ) from exc
+        if any(not isinstance(name, str) for name in requested):
+            raise TypeError("raw_channels column names must be strings")
+    selected = set()
+    for requested_name in requested:
+        if requested_name in column_names:
+            selected.update(
+                idx for idx, source_name in enumerate(column_names)
+                if source_name == requested_name
+            )
+        else:
+            selected.update(idx for idx, key in enumerate(keys) if key == requested_name)
+    return tuple(idx for idx in range(len(column_names)) if idx in selected)
+
+
+def _vbo_sample_rate(timestamps):
+    """Infer a rate from distinct finite elapsed timestamps, when possible."""
+    finite = np.asarray(timestamps, dtype=np.float64)
+    finite = np.unique(finite[np.isfinite(finite)])
+    deltas = np.diff(finite)
+    deltas = deltas[np.isfinite(deltas) & (deltas > 0)]
+    return float(1.0 / np.median(deltas)) if len(deltas) else None
+
+
+def _record_vbo_raw_inventory(data_log, column_names, keys, header_lines):
+    headers_aligned = len(header_lines) == len(column_names)
+    data_log.metadata["vbo_raw_columns"] = [
+        {
+            "raw_name": raw_name,
+            "key": keys[idx],
+            "column_index": idx,
+            "source_header": header_lines[idx] if headers_aligned else None,
+            "source_units": _vbo_declared_unit(header_lines[idx]) if headers_aligned else "",
+        }
+        for idx, raw_name in enumerate(column_names)
+    ]
+
+
+def _append_vbo_raw_chunk(indices, rows, time_idx, elapsed, buffers, source_times, elapsed_parts):
+    if not indices:
+        return
+    elapsed_parts.append(elapsed)
+    source_time, _ = _safe_float_column([parts[time_idx] for parts in rows])
+    source_times.append(source_time)
+    for idx in indices:
+        values, _ = _safe_float_column([parts[idx] for parts in rows])
+        buffers[idx].append(values)
+
+
+def _populate_vbo_raw_channels(
+    data_log, column_names, keys, selected_indices, headers, buffers,
+    source_time_parts, elapsed_parts,
+):
+    if not selected_indices:
+        return
+    elapsed = np.concatenate(elapsed_parts) if elapsed_parts else np.empty(0, dtype=np.float64)
+    source_times = (
+        np.concatenate(source_time_parts)
+        if source_time_parts else np.empty(0, dtype=np.float64)
+    )
+    rate = _vbo_sample_rate(elapsed)
+    monotonic = bool(
+        len(elapsed) < 2
+        or (np.all(np.isfinite(elapsed)) and np.all(np.diff(elapsed) >= 0)),
+    )
+    for idx in selected_indices:
+        raw_name = column_names[idx]
+        key = keys[idx]
+        header = headers[idx] if len(headers) == len(column_names) else None
+        units = _vbo_declared_unit(header) if header is not None else ""
+        values = (
+            np.concatenate(buffers[idx])
+            if buffers[idx] else np.empty(0, dtype=np.float64)
+        )
+        provenance = MappingProxyType({
+            "source": "VBO",
+            "source_time_encoding": "HHMMSS.fraction",
+            "dtype": "<f8",
+            "raw_name": raw_name,
+            "column_index": idx,
+            "source_header": header,
+            "source_units": units,
+            "value_origin": "numeric_text",
+            "series_sample_rate_hz": rate,
+        })
+        data_log.raw_channels[key] = ChannelView(
+            key, units, readonly(elapsed), readonly(values), rate, provenance,
+            readonly(source_times), monotonic,
+        )
+
+
+def parse_vbo_log(data_log, log_lines, target_lap=None, *, raw_channels=None):
     """ Creates channels populated with messages from a Racelogic .vbo log file. """
     data_log.clear()
     data_log.laps_info = {}
@@ -101,6 +251,12 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
     if time_idx < 0:
         print("ERROR: VBO file missing 'time' column")
         return
+
+    raw_keys = _vbo_column_keys(cols_raw) if raw_channels is not None else ()
+    selected_raw_indices = _selected_vbo_columns(raw_channels, cols_raw, raw_keys)
+    header_lines = [line for line in sections.get("header", []) if line]
+    if raw_channels is not None:
+        _record_vbo_raw_inventory(data_log, cols_raw, raw_keys, header_lines)
 
     # Group source columns by canonical channel, preserving column order:
     # later columns win per row (refined values sort last).
@@ -149,6 +305,9 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
     t0 = None
     n_cols = len(cols_raw)
     buffers = {out_name: ([], []) for out_name in groups}
+    selected_raw_buffers = {idx: [] for idx in selected_raw_indices}
+    source_time_parts = []
+    elapsed_parts = []
     for start in range(0, len(data_lines), _VBO_CHUNK_ROWS):
         rows = [line.split() for line in data_lines[start:start + _VBO_CHUNK_ROWS]]
         rows = [parts for parts in rows if len(parts) >= n_cols]
@@ -159,6 +318,10 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
             t0 = t_secs[0]
         t_rel = np.asarray(t_secs, dtype=np.float64) - t0
         t_rel[t_rel < 0] += 86400.0  # Handle midnight wrapping
+        _append_vbo_raw_chunk(
+            selected_raw_indices, rows, time_idx, t_rel, selected_raw_buffers,
+            source_time_parts, elapsed_parts,
+        )
         for out_name, sources in groups.items():
             best = None
             best_valid = None
@@ -191,3 +354,8 @@ def parse_vbo_log(data_log, log_lines, target_lap=None):
             data_log.channels[out_name].set_samples(
                 np.concatenate(ts_parts), np.concatenate(val_parts),
             )
+
+    _populate_vbo_raw_channels(
+        data_log, cols_raw, raw_keys, selected_raw_indices, header_lines,
+        selected_raw_buffers, source_time_parts, elapsed_parts,
+    )

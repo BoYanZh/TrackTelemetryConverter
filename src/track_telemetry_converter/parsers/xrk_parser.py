@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import asdict, is_dataclass
+from types import MappingProxyType
 
 import numpy as np
 
@@ -26,6 +27,7 @@ from ..channels import (
     CH_YAW_RATE,
     CHANNEL_ALIASES,
 )
+from ..lap_view import ChannelView, readonly
 
 # XRK-specific aliases and priorities: CAN IMU wins over internal IMU when both
 # are recorded. Every candidate remains in metadata; samples are never blended.
@@ -148,19 +150,29 @@ def _compute_origin_ms(raw_channels, laps):
     """
     origins_ms = []
     for table in raw_channels.values():
-        if table is None or table.num_rows == 0:
-            continue
         try:
-            timecodes = table.column("timecodes").to_numpy()
-            if len(timecodes):
-                origins_ms.append(float(np.nanmin(timecodes)))
-        except (KeyError, ValueError, TypeError):
+            if table is None or table.num_rows == 0:
+                continue
+            timecodes = np.asarray(table.column("timecodes").to_numpy(), dtype=np.float64)
+            if timecodes.ndim != 1:
+                continue
+            finite_timecodes = timecodes[np.isfinite(timecodes)]
+            if len(finite_timecodes):
+                origins_ms.append(float(finite_timecodes.min()))
+        except (AttributeError, KeyError, ValueError, TypeError):
             continue
-    if laps is not None and laps.num_rows > 0:
+    try:
+        has_laps = laps is not None and laps.num_rows > 0
+    except (AttributeError, TypeError, ValueError):
+        has_laps = False
+    if has_laps and laps is not None:
         try:
-            lap_starts = [v for v in laps.column("start_time").to_pylist() if v is not None]
+            lap_starts = [
+                float(v) for v in laps.column("start_time").to_pylist() if v is not None
+            ]
+            lap_starts = [v for v in lap_starts if np.isfinite(v)]
             if lap_starts:
-                origins_ms.append(float(min(lap_starts)))
+                origins_ms.append(min(lap_starts))
         except Exception:
             print("WARNING: Could not read XRK lap origins; using channel clocks only")
     return min(origins_ms) if origins_ms else 0.0
@@ -179,7 +191,9 @@ def _read_channel_samples(table, ch_name):
     try:
         timecodes_ms = np.asarray(table.column("timecodes").to_numpy(), dtype=np.float64)
         values = np.asarray(table.column(ch_name).to_numpy(zero_copy_only=False), dtype=np.float64)
-    except (KeyError, ValueError, TypeError):
+    except Exception:
+        return None
+    if timecodes_ms.ndim != 1 or values.ndim != 1 or len(timecodes_ms) != len(values):
         return None
     valid = np.isfinite(timecodes_ms) & np.isfinite(values)
     if not np.any(valid):
@@ -187,25 +201,42 @@ def _read_channel_samples(table, ch_name):
     return timecodes_ms[valid], values[valid]
 
 
-def _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, channel_metadata_cls):
+def _channel_metadata(table, channel_metadata_cls):
+    try:
+        meta_obj = channel_metadata_cls.from_channel_table(table)
+    except Exception:
+        meta_obj = None
+    raw_meta = (
+        asdict(meta_obj)
+        if (meta_obj is not None and is_dataclass(meta_obj)
+            and not isinstance(meta_obj, type))
+        else {}
+    )
+    return meta_obj, raw_meta
+
+
+def _table_num_rows(table):
+    try:
+        return int(table.num_rows)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _parse_xrk_channels(data_log, decoded_channels, aliases_casefold, global_t0_ms,
+                        channel_metadata_cls):
     """Populate channels from XRK channel tables."""
     inventory = data_log.metadata.setdefault("xrk_channel_inventory", {})
     provenance = data_log.metadata.setdefault("channel_provenance", {})
     selected_priority = {}
-    for ch_name, table in raw_channels.items():
-        if ch_name is None or table is None or table.num_rows == 0:
+    for ch_name, table in decoded_channels.items():
+        row_count = _table_num_rows(table)
+        if ch_name is None or row_count is None or row_count == 0:
             continue
         if ch_name.lower() == "timecodes":
             continue
 
-        try:
-            meta_obj = channel_metadata_cls.from_channel_table(table)
-        except Exception:
-            meta_obj = None
-
-        raw_meta = asdict(meta_obj) if (meta_obj is not None and is_dataclass(meta_obj)
-                                        and not isinstance(meta_obj, type)) else {}
-        inventory[ch_name] = {"metadata": raw_meta, "samples": table.num_rows,
+        meta_obj, raw_meta = _channel_metadata(table, channel_metadata_cls)
+        inventory[ch_name] = {"metadata": raw_meta, "samples": row_count,
                               "mapped_channel": None}
         alias = _resolve_alias(ch_name, aliases_casefold)
         if alias is None:
@@ -241,6 +272,7 @@ def _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, 
             continue
         selected_priority[out_name] = priority
         provenance[out_name] = record
+        data_log.channel_metadata[out_name] = {**record, "sample_rate": series_hz}
 
         source_unit = getattr(meta_obj, "units", "") if meta_obj is not None else ""
         values = _convert_values(values, source_unit, unit)
@@ -253,6 +285,103 @@ def _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, 
             data_log.add_channel(out_name, unit, float, dec_use)
 
         data_log.channels[out_name].set_samples(timestamps, values)
+
+
+def _select_xrk_raw_names(decoded_channels, selection):
+    """Return requested decoded channel names in source order."""
+    if selection is None:
+        return ()
+    if isinstance(selection, str):
+        if selection.casefold() == "all":
+            requested = None
+        else:
+            requested = {selection}
+    else:
+        try:
+            requested = set(selection)
+        except TypeError as exc:
+            raise TypeError("raw_channels must be None, 'all', a channel name, or an iterable") from exc
+        if any(not isinstance(name, str) for name in requested):
+            raise TypeError("raw_channels channel names must be strings")
+
+    return tuple(
+        name for name in decoded_channels
+        if name != "timecodes" and (requested is None or name in requested)
+    )
+
+
+def _read_raw_channel_samples(table, ch_name):
+    """Return raw numeric source clocks and values, preserving order and dtype."""
+    try:
+        source_timestamps = np.asarray(
+            table.column("timecodes").to_numpy(zero_copy_only=False),
+        )
+        values = np.asarray(table.column(ch_name).to_numpy(zero_copy_only=False))
+    except Exception:
+        return None, "missing or unreadable timecodes/value column"
+
+    if source_timestamps.ndim != 1 or values.ndim != 1:
+        return None, "unsupported non-scalar channel shape"
+    if len(source_timestamps) != len(values):
+        return None, "timecodes/value length mismatch"
+    if source_timestamps.dtype.kind not in "biuf" or values.dtype.kind not in "biuf":
+        return None, "unsupported non-numeric timecodes or values"
+    try:
+        elapsed_ms = np.asarray(source_timestamps, dtype=np.float64)
+    except (TypeError, ValueError, OverflowError):
+        return None, "unsupported timecode values"
+    return (source_timestamps, elapsed_ms, values), None
+
+
+def _parse_xrk_raw_channels(data_log, decoded_channels, selection, global_t0_ms,
+                            channel_metadata_cls):
+    """Expose selected libxrk-decoded channels without canonical transformations."""
+    for ch_name in _select_xrk_raw_names(decoded_channels, selection):
+        table = decoded_channels[ch_name]
+        row_count = _table_num_rows(table)
+        if row_count is None or row_count == 0:
+            continue
+        samples, reason = _read_raw_channel_samples(table, ch_name)
+        if samples is None:
+            print(f"WARNING: Skipping XRK raw channel '{ch_name}': {reason}")
+            continue
+        source_timestamps, elapsed_ms, values = samples
+        meta_obj, raw_meta = _channel_metadata(table, channel_metadata_cls)
+        finite_timecodes = elapsed_ms[np.isfinite(elapsed_ms)]
+        unique_timecodes = np.unique(finite_timecodes)
+        intervals = np.diff(unique_timecodes)
+        series_hz = (
+            float(1000.0 / np.median(intervals))
+            if len(intervals) and np.all(intervals > 0)
+            else None
+        )
+        timestamps = (elapsed_ms - global_t0_ms) / 1000.0
+        timestamps_monotonic = bool(
+            np.all(np.isfinite(timestamps)) and np.all(np.diff(timestamps) >= 0),
+        )
+        units = getattr(meta_obj, "units", "") if meta_obj is not None else ""
+        provenance = {
+            **raw_meta,
+            "raw_name": ch_name,
+            "source": "XRK",
+            "value_origin": "libxrk_decoded",
+            "source_metadata": dict(raw_meta),
+            "dtype": values.dtype.name,
+            "source_units": units,
+            "series_sample_rate_hz": series_hz,
+            "native_acquisition_rate_hz": None,
+            "time_origin_ms": global_t0_ms,
+        }
+        data_log.raw_channels[ch_name] = ChannelView(
+            name=ch_name,
+            units=units,
+            timestamps=readonly(timestamps),
+            values=readonly(values),
+            sample_rate=series_hz,
+            provenance=MappingProxyType(provenance),
+            source_timestamps=readonly(source_timestamps),
+            timestamps_monotonic=timestamps_monotonic,
+        )
 
 
 def _parse_xrk_laps(laps, global_t0_ms):
@@ -288,7 +417,7 @@ def _parse_xrk_laps(laps, global_t0_ms):
 
 
 def _filter_xrk_lap(data_log, laps_info, target_lap):
-    """Keep channel samples within the requested lap window."""
+    """Keep canonical and raw channel samples within the requested lap window."""
     if target_lap is None or str(target_lap).lower() == "all":
         return
     try:
@@ -300,13 +429,15 @@ def _filter_xrk_lap(data_log, laps_info, target_lap):
             for name in list(data_log.channels):
                 ch = data_log.channels[name]
                 ch.messages = [m for m in ch.messages if t_lo <= m.timestamp <= t_hi]
+            for name, channel in list(data_log.raw_channels.items()):
+                data_log.raw_channels[name] = channel.between(t_lo, t_hi, include_end=True)
         else:
             print(f"WARNING: Lap '{target_lap}' not found in XRK file; keeping all laps")
     except (ValueError, IndexError):
         print(f"WARNING: Lap '{target_lap}' not found in XRK file; keeping all laps")
 
 
-def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
+def parse_xrk_log(data_log, xrk_file_path, target_lap=None, *, raw_channels=None):
     """ Creates channels populated with messages from an AIM .xrk/.xrz log file. """
     try:
         from libxrk import aim_xrk
@@ -325,13 +456,18 @@ def parse_xrk_log(data_log, xrk_file_path, target_lap=None):
     meta = getattr(log, "metadata", {}) or {}
     _apply_xrk_metadata(data_log, meta)
 
-    raw_channels = log.channels or {}
+    decoded_channels = log.channels or {}
     laps = getattr(log, "laps", None)
-    global_t0_ms = _compute_origin_ms(raw_channels, laps)
+    global_t0_ms = _compute_origin_ms(decoded_channels, laps)
     aliases_casefold = {str(key).strip().casefold(): value for key, value in CHANNEL_ALIASES.items()}
 
     # ---- channels ----
-    _parse_xrk_channels(data_log, raw_channels, aliases_casefold, global_t0_ms, ChannelMetadata)
+    _parse_xrk_channels(
+        data_log, decoded_channels, aliases_casefold, global_t0_ms, ChannelMetadata,
+    )
+    _parse_xrk_raw_channels(
+        data_log, decoded_channels, raw_channels, global_t0_ms, ChannelMetadata,
+    )
 
     # ---- laps ----
     laps_info = _parse_xrk_laps(laps, global_t0_ms)

@@ -27,13 +27,22 @@ class ChannelView:
     values: np.ndarray
     sample_rate: float | None
     provenance: Mapping[str, Any]
+    source_timestamps: np.ndarray | None = None
+    timestamps_monotonic: bool = True
 
     def between(self, start, end, *, include_end=False):
-        left = self.timestamps.searchsorted(start, side="left")
-        right = self.timestamps.searchsorted(end, side="right" if include_end else "left")
+        if self.timestamps_monotonic:
+            left = self.timestamps.searchsorted(start, side="left")
+            right = self.timestamps.searchsorted(end, side="right" if include_end else "left")
+            selection = slice(left, right)
+        else:
+            within_end = self.timestamps <= end if include_end else self.timestamps < end
+            selection = np.isfinite(self.timestamps) & (self.timestamps >= start) & within_end
         return ChannelView(
-            self.name, self.units, readonly(self.timestamps[left:right]),
-            readonly(self.values[left:right]), self.sample_rate, self.provenance,
+            self.name, self.units, readonly(self.timestamps[selection]),
+            readonly(self.values[selection]), self.sample_rate, self.provenance,
+            readonly(self.source_timestamps[selection]) if self.source_timestamps is not None else None,
+            self.timestamps_monotonic,
         )
 
 

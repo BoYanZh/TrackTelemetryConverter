@@ -440,9 +440,9 @@ class DataLog:
         from .parsers.ibt_parser import parse_ibt_log
         parse_ibt_log(self, ibt_file_path, raw_channels=raw_channels)
 
-    def from_vbo_log(self, log_lines, target_lap=None):
+    def from_vbo_log(self, log_lines, target_lap=None, *, raw_channels=None):
         from .parsers.vbo_parser import parse_vbo_log
-        parse_vbo_log(self, log_lines, target_lap=target_lap)
+        parse_vbo_log(self, log_lines, target_lap=target_lap, raw_channels=raw_channels)
 
     def from_dlap_log(self, dlap_file_path, target_lap=None):
         from .parsers.dlap_parser import parse_dlap_log
@@ -478,9 +478,9 @@ class DataLog:
         from .parsers.accessport_parser import parse_accessport_log
         parse_accessport_log(self, log_lines)
 
-    def from_xrk_log(self, xrk_file_path, target_lap=None):
+    def from_xrk_log(self, xrk_file_path, target_lap=None, *, raw_channels=None):
         from .parsers.xrk_parser import parse_xrk_log
-        parse_xrk_log(self, xrk_file_path, target_lap=target_lap)
+        parse_xrk_log(self, xrk_file_path, target_lap=target_lap, raw_channels=raw_channels)
 
     def from_acti_log(self, acti_file_path, target_lap=None, track=None, anchors=None, realign_sf=False):
         from .parsers.acti_parser import parse_acti_log
