@@ -66,6 +66,7 @@ from ..channels import (
     CH_YAW_RATE,
     CHANNEL_ALIASES,
 )
+from ..derived import course_heading_from_gps as _courtesy_heading
 
 #: Canonical names indexed case-insensitively (identity matches).
 _CANONICAL_BY_LOWER = {}
@@ -240,32 +241,6 @@ def _channel_samples(ld, name: str) -> tuple[np.ndarray, float] | tuple[None, fl
             freq = float(channel.freq) if channel.freq and channel.freq > 0 else 20.0
             return values, freq
     return None, 20.0
-
-
-def _courtesy_heading(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
-    """Course heading (deg, 0=N) from GPS when the file records no bearing."""
-    lat = np.asarray(lat, dtype=float)
-    lon = np.asarray(lon, dtype=float)
-    lat0 = float(np.median(lat[np.isfinite(lat)])) if np.any(np.isfinite(lat)) else 0.0
-    x = np.radians(lon - np.median(lon[np.isfinite(lon)])) * 6371000.0 * np.cos(np.radians(lat0))
-    y = np.radians(lat - np.median(lat[np.isfinite(lat)])) * 6371000.0
-    dx = np.gradient(x)
-    dy = np.gradient(y)
-    step = np.hypot(dx, dy)
-    raw = np.degrees(np.arctan2(dx, dy)) % 360.0
-    moving = np.isfinite(step) & (step > 0.01)
-    if not np.any(moving):
-        return np.zeros_like(raw)
-    heading = np.copy(raw)
-    last = 0.0
-    for i in range(len(heading)):
-        if moving[i] and np.isfinite(heading[i]):
-            last = heading[i]
-        else:
-            heading[i] = last
-    first = int(np.argmax(moving))
-    heading[:first] = heading[first]
-    return np.round(heading, 3)
 
 
 def _lap_groups_from_channel(values: np.ndarray) -> list[tuple[int, int, int]] | None:

@@ -7,6 +7,7 @@ import zipfile
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any, Literal
 
+from .derived import ensure_gps_heading
 from .diagnostics import build_diagnostic_report
 from .errors import TelemetryParseError
 from .input_loading import detect_input_type, load_log_data
@@ -638,6 +639,8 @@ def _convert_one(
             mask_interp_gaps=args.mask_interp_gaps,
         )
         emit(f"Resampled channels at {resample_freq:.1f} Hz...")
+        if ensure_gps_heading(data_log):
+            emit("Derived GPS Heading from positions (log records none)...")
         emit(f"Calculating math channels (g-source: {args.g_source})...")
         data_log.calculate_math_channels(
             g_source=args.g_source,

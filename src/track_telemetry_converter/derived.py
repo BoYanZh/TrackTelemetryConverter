@@ -14,6 +14,8 @@ from .channels import (
     CH_CG_ACCEL_LON_SMOOTH,
     CH_G_COMBINED,
     CH_GPS_HEADING,
+    CH_GPS_LATITUDE,
+    CH_GPS_LONGITUDE,
     CH_GROUND_SPEED,
     CH_STEERING_ANGLE,
     CH_THROTTLE_POS,
@@ -253,6 +255,70 @@ def calculate_rate(data_log, channel_name, unit):
         new_name = channel_name + " Rate"
         data_log.add_channel(new_name, unit, float, 2)
         data_log.channels[new_name].set_samples(times.copy(), rate)
+
+
+def course_heading_from_gps(lat, lon):
+    """Course heading (deg, 0=N) from GPS positions.
+
+    Shared by the MoTeC LD parser and the post-resample ensure step: holds
+    the last moving heading across standstill / NaN samples.
+    """
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    finite = np.isfinite(lat) & np.isfinite(lon)
+    lat0 = float(np.median(lat[finite])) if np.any(finite) else 0.0
+    lon_med = float(np.median(lon[finite])) if np.any(finite) else 0.0
+    x = np.radians(lon - lon_med) * 6371000.0 * np.cos(np.radians(lat0))
+    y = np.radians(lat - np.median(lat[finite])) * 6371000.0 if np.any(finite) else np.zeros_like(lat)
+    dx = np.gradient(x)
+    dy = np.gradient(y)
+    step = np.hypot(dx, dy)
+    raw = np.degrees(np.arctan2(dx, dy)) % 360.0
+    moving = np.isfinite(step) & (step > 0.01)
+    if not np.any(moving):
+        return np.zeros_like(raw)
+    heading = np.copy(raw)
+    last = 0.0
+    for i in range(len(heading)):
+        if moving[i] and np.isfinite(heading[i]):
+            last = heading[i]
+        else:
+            heading[i] = last
+    first = int(np.argmax(moving))
+    heading[:first] = heading[first]
+    return np.round(heading, 3)
+
+
+def ensure_gps_heading(data_log):
+    """Derive course heading from GPS positions when the log records none.
+
+    Runs on the resampled common clock (call after DataLog.resample): fills
+    the GPS Heading channel so beacon detection, --direction-suffix, yaw
+    rate derivation and exports behave the same for heading-less logs.
+    Returns True when a channel was added.
+    """
+    if CH_GPS_HEADING in data_log.channels:
+        return False
+    lat_ch = data_log.channels.get(CH_GPS_LATITUDE)
+    lon_ch = data_log.channels.get(CH_GPS_LONGITUDE)
+    if lat_ch is None or lon_ch is None:
+        return False
+    lat_t = np.ascontiguousarray(lat_ch.timestamps, dtype=np.float64)
+    lat_v = np.ascontiguousarray(lat_ch.values, dtype=np.float64)
+    lon_t = np.ascontiguousarray(lon_ch.timestamps, dtype=np.float64)
+    lon_v = np.ascontiguousarray(lon_ch.values, dtype=np.float64)
+    if lat_t.size < 2 or lon_t.size < 2:
+        return False
+    if lon_t.shape != lat_t.shape or not np.array_equal(lon_t, lat_t):
+        finite = np.isfinite(lon_t) & np.isfinite(lon_v)
+        if int(np.sum(finite)) < 2:
+            return False
+        lon_v = np.interp(lat_t, lon_t[finite], lon_v[finite], left=np.nan, right=np.nan)
+    heading = course_heading_from_gps(lat_v, lon_v)
+    data_log.add_channel(CH_GPS_HEADING, "deg", float, 3)
+    data_log.channels[CH_GPS_HEADING].set_samples(np.asarray(lat_t), heading)
+    data_log.metadata["gps_heading_synthetic"] = True
+    return True
 
 
 def derive_yaw_rate_from_gps_heading(data_log):
