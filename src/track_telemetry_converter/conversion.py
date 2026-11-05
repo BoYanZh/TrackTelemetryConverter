@@ -468,6 +468,7 @@ class ConversionOptions:
     dbc: str | None = None
     track: str = ""
     anchor: str = ""
+    realign_sf: bool = False
     session: str | None = None
     stint: str = "all"
     lap: str = "all"

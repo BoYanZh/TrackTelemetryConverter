@@ -236,4 +236,27 @@ def test_selected_backup_stint_failure_is_not_hidden_by_existing_first_stint(tmp
     assert not stint1.exists() and not stint1.with_suffix(".ldx").exists()
 
 
+def test_from_namespace_preserves_acti_options():
+    """Batch mode must not drop ACTI flags when round-tripping argparse.
+
+    Regression test: --realign-sf reached single-file conversion but was
+    silently lost in batch mode because ConversionOptions lacked the field.
+    """
+    import argparse
+
+    from track_telemetry_converter.conversion import _namespace
+
+    args = argparse.Namespace(
+        log="x.ld",
+        log_type="ACTI",
+        track="thunderhill_auto",
+        anchor="",
+        realign_sf=True,
+    )
+    request = ConversionRequest.from_namespace(args)
+    assert request.options.track == "thunderhill_auto"
+    assert request.options.realign_sf is True
+    assert getattr(_namespace(request), "realign_sf", False) is True
+
+
 
