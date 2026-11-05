@@ -205,6 +205,74 @@ Run `track-telemetry --help` for the authoritative option list.
 - `--vbo-columns` selects a subset of VBO extra columns, or renames them
   (`CustomName=Channel Name`); defaults to all available extras.
 
+## Reading individual IBT laps in Python
+
+```python
+from track_telemetry_converter.log import DataLog
+
+log = DataLog()
+log.from_ibt_log("session.ibt", raw_channels=["LapDistPct", "SessionTime", "YawRate"])
+for lap in log.iter_laps(channels=["Ground Speed", "Brake Pos", "Throttle Pos"]):
+    print(dict(lap.info))
+
+# lap_num is unique within this recording, even when iRacing resets its counter.
+lap = log.get_lap(2, channels=["Ground Speed", "Steering Angle"])
+speed = lap.channels.get("Ground Speed")
+if speed is not None:
+    print(speed.timestamps, speed.values, speed.units, speed.sample_rate)
+    print(dict(speed.provenance))
+native_distance = lap.raw_channels.get("LapDistPct")
+```
+
+`iter_laps()` and `get_lap()` return read-only views of existing arrays without
+resampling or rebasing each lap. Missing requested channels are omitted; an
+unknown `lap_num` raises `KeyError`. Each `info` includes elapsed start/end times,
+duration, `stint`, original `source_lap_num` when available, and `complete`.
+First/last segments and segments interrupted by a reset remain partial.
+`valid` is separate from completeness: `None` means the available telemetry
+does not establish official lap validity. Duration alone never establishes it.
+These views share storage with the log; they are not detached snapshots.
+Extract before explicitly calling `resample()` if you need native samples.
+The canonical `Lap Number` channel retains its historical crossing count,
+starting at zero. It differs from the unique segment `lap_num` used by this API.
+If no complete eligible lap exists, `fastest_lap` is `None`.
+
+Elapsed timestamps use recorded `SessionTime` intervals, starting at zero.
+Backward, repeated, or nonfinite intervals use one tick interval instead;
+`metadata["ibt"]["time_repaired"]` records this repair when SessionTime exists.
+`source_timestamps` retains the original SessionTime values for alignment and
+inspection. Without SessionTime, timestamps use the header tick rate. Timing
+boundaries have sample-level precision and are not interpolated across the
+start/finish line. Resets and session changes split stints, so laps cannot span
+them. Missing or contradictory lap signals can leave segments partial.
+`LapDistPct` wraps corroborate counter increments when present. Distance jumps
+of more than half a lap also split continuity, including active resets where
+the counter keeps advancing. Smaller teleports without another reset signal
+may remain undetected. Sparse recordings and configurations with separate
+start/finish lines, such as Tourist, may conservatively yield partial laps.
+This detector does not claim exact official timing or official lap validity.
+
+`raw_channels=None` keeps the existing canonical channel selection. Pass a
+list of original IBT names, a single name, or `"all"` to populate
+`log.raw_channels`. This separate namespace never feeds automatic MoTeC export.
+Raw values retain their dtype, units, and array width; scalar shapes are
+`(ticks,)` and array shapes are `(ticks, count)`. Character variables use `S1`
+bytes and booleans use NumPy bools. `provenance` records the native type code,
+count, `count_as_time`, and description. Arrays marked `count_as_time` retain
+their recorded rows without guessing sub-sample timestamps; `sample_rate`
+is the row tick rate. `metadata["ibt"]["variables"]` catalogs valid variable
+headers even when no raw values are requested. Unsupported type codes and
+headers outside a tick's byte bounds are skipped. Raw views share the file's
+in-memory byte buffer; selecting all variables does not copy every array.
+For `count_as_time` arrays, provenance also reports `subsample_rate` as tick
+rate times count. This preserves the SDK's distinction between array elements
+and [time subdivisions](https://www.iracing.com/2017-season-1-release-notes/).
+
+Speed, steering, yaw rate, acceleration, and pressure retain the existing
+canonical conversions. Native `LapDistPct`, coordinates, and source timestamps
+are available for downstream distance-based comparison. This API does not
+align laps, adjudicate iRacing incident penalties, or provide coaching.
+
 ## Project layout
 
 ```text

@@ -57,6 +57,9 @@ class DataLog:
         self.traps: list[dict[str, Any]] = []
         self.laps_info: dict[str, Any] = {}
         self.rcz_metadata: dict[str, Any] = {}
+        self.raw_channels = {}
+        self.channel_metadata: dict[str, dict[str, Any]] = {}
+        self.source_timestamps: np.ndarray | None = None
 
     def clear(self):
         self.channels = {}
@@ -68,6 +71,25 @@ class DataLog:
         self.traps = []
         self.laps_info = {}
         self.rcz_metadata = {}
+        self.raw_channels = {}
+        self.channel_metadata = {}
+        self.source_timestamps = None
+
+    def iter_laps(self, *, channels=None, raw_channels=None):
+        """Yield read-only views, including partial laps, without resampling."""
+        from .lap_view import make_lap_view
+
+        for info in self.laps_info.get("laps", []):
+            yield make_lap_view(self, info, channels, raw_channels)
+
+    def get_lap(self, lap_num, *, channels=None, raw_channels=None):
+        """Select a unique sequential lap_num, independent of source lap resets."""
+        from .lap_view import make_lap_view
+
+        for info in self.laps_info.get("laps", []):
+            if info["lap_num"] == lap_num:
+                return make_lap_view(self, info, channels, raw_channels)
+        raise KeyError(lap_num)
 
     def add_channel(self, name, units, data_type, decimals, initial_message=None):
         if any(k in name.lower() for k in ["latitude", "longitude", "lat", "lon"]):
@@ -156,6 +178,9 @@ class DataLog:
         end = self.end()
         for channel_name in self.channels:
             self.channels[channel_name].resample(start, end, frequency, mask_interp_gaps=mask_interp_gaps)
+            if channel_name in self.channel_metadata:
+                self.channel_metadata[channel_name]["sample_rate"] = frequency
+                self.channel_metadata[channel_name]["resampled"] = True
         return frequency
 
     def detect_beacons(self, min_speed_kmh=30.0, min_time_sec=15.0, min_lap_sec=40.0,
@@ -411,9 +436,9 @@ class DataLog:
         from .parsers.racechrono_csv_parser import parse_racechrono_log
         parse_racechrono_log(self, log_lines, target_lap=target_lap)
 
-    def from_ibt_log(self, ibt_file_path):
+    def from_ibt_log(self, ibt_file_path, *, raw_channels=None):
         from .parsers.ibt_parser import parse_ibt_log
-        parse_ibt_log(self, ibt_file_path)
+        parse_ibt_log(self, ibt_file_path, raw_channels=raw_channels)
 
     def from_vbo_log(self, log_lines, target_lap=None):
         from .parsers.vbo_parser import parse_vbo_log

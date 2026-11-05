@@ -1149,32 +1149,60 @@
       "Lap 1"
      ]
     ],
-    "fastest_lap": 1,
+    "fastest_lap": null,
     "fastest_time": 0.0,
     "laps": [
      {
+      "complete": false,
       "duration": 0.5,
       "end_time": 0.5,
       "lap_label": "Out Lap",
       "lap_num": 1,
+      "source_lap_num": 0,
       "start_time": 0.0,
       "stint": 0,
-      "type": "Out Lap"
+      "type": "Out Lap",
+      "valid": null
      },
      {
+      "complete": false,
       "duration": 0.4,
       "end_time": 0.9,
       "lap_label": "In Lap",
       "lap_num": 2,
+      "source_lap_num": 1,
       "start_time": 0.5,
       "stint": 0,
-      "type": "In Lap"
+      "type": "In Lap",
+      "valid": null
      }
     ],
     "total_laps": 2
    },
    "metadata": {
     "driver": "Test Driver",
+    "ibt": {
+     "sample_rate": 10,
+     "time_source": "tick_rate",
+     "variables": {
+      "Lap": {
+       "count": 1,
+       "count_as_time": false,
+       "description": "",
+       "dtype": "<i4",
+       "type_code": 2,
+       "units": ""
+      },
+      "Speed": {
+       "count": 1,
+       "count_as_time": false,
+       "description": "",
+       "dtype": "<f4",
+       "type_code": 4,
+       "units": "m/s"
+      }
+     }
+    },
     "vehicle_id": "Test Car",
     "venue_name": "Test Track"
    },
@@ -1252,32 +1280,60 @@
       "Lap 1"
      ]
     ],
-    "fastest_lap": 1,
+    "fastest_lap": null,
     "fastest_time": 0.0,
     "laps": [
      {
+      "complete": false,
       "duration": 0.5,
       "end_time": 0.5,
       "lap_label": "Out Lap",
       "lap_num": 1,
+      "source_lap_num": 0,
       "start_time": 0.0,
       "stint": 0,
-      "type": "Out Lap"
+      "type": "Out Lap",
+      "valid": null
      },
      {
+      "complete": false,
       "duration": 0.4,
       "end_time": 0.9,
       "lap_label": "In Lap",
       "lap_num": 2,
+      "source_lap_num": 1,
       "start_time": 0.5,
       "stint": 0,
-      "type": "In Lap"
+      "type": "In Lap",
+      "valid": null
      }
     ],
     "total_laps": 2
    },
    "metadata": {
     "driver": "Test Driver",
+    "ibt": {
+     "sample_rate": 10,
+     "time_source": "tick_rate",
+     "variables": {
+      "Lap": {
+       "count": 1,
+       "count_as_time": false,
+       "description": "",
+       "dtype": "<i4",
+       "type_code": 2,
+       "units": ""
+      },
+      "Speed": {
+       "count": 1,
+       "count_as_time": false,
+       "description": "",
+       "dtype": "<f4",
+       "type_code": 4,
+       "units": "m/s"
+      }
+     }
+    },
     "vehicle_id": "Test Car",
     "venue_name": "Test Track"
    },
