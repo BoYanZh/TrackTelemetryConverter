@@ -469,21 +469,22 @@ def test_parse_acti_log_prefers_recorded_accelerator_over_mirror(tmp_path):
     np.testing.assert_allclose(out.channels["Accelerator Pos"].values, np.full(n, 42.0))
 
 
-def _write_realign_synthetic_ld(path, venue_name="Thunderhill East Bypass test", freq=20.0):
-    """ACTI-shaped .ld whose sim resets (t=10/30 s) miss the real S/F (t=20 s).
+def _write_realign_synthetic_ld(path, venue_name="Thunderhill East Bypass test", freq=20.0,
+                                resets=(10.0, 30.0), cross_t=20.0, duration_s=40.0):
+    """ACTI-shaped .ld whose sim resets miss the real S/F (crossed at cross_t).
 
     The Car Coord trace drives due south through the real Thunderhill East
-    Start/Finish trap at 50 m/s, crossing it at t=20 s, while the Lap Time
-    channel resets at t=10 s and t=30 s like a mod timing line ~63 m off.
+    Start/Finish trap at 50 m/s, crossing it at t=cross_t, while the Lap Time
+    channel resets at the given sim times like a mod timing line ~63 m off.
     """
     from track_telemetry_converter.channels import TRACK_BEACONS
 
     sf = TRACK_BEACONS["Thunderhill East Bypass"]
-    n = int(40 * freq)
+    n = int(duration_s * freq)
     t = np.arange(n) / freq
     speed_ms = 50.0
-    # y runs +1000 m -> -1000 m so y_real crosses 0 (the beacon) at t=20 s.
-    y = 1000.0 - speed_ms * t
+    # y runs so y_real crosses 0 (the beacon) at t=cross_t.
+    y = speed_ms * (cross_t - t)
     log = DataLog()
     log.add_channel("Car Coord X", "m", float, 3)
     log.channels["Car Coord X"].set_samples(t, np.zeros(n))
@@ -491,7 +492,11 @@ def _write_realign_synthetic_ld(path, venue_name="Thunderhill East Bypass test",
     log.channels["Car Coord Y"].set_samples(t, y)
     log.add_channel("Ground Speed", "km/h", float, 2)
     log.channels["Ground Speed"].set_samples(t, np.full(n, speed_ms * 3.6))
-    lt = np.where(t < 10, t, np.where(t < 30, t - 10, t - 30))
+    bounds = [0.0, *resets, duration_s]
+    lt = np.empty(n)
+    for i, ti in enumerate(t):
+        lo = max(b for b in bounds if b <= ti + 1e-9)
+        lt[i] = ti - lo
     log.add_channel("Lap Time", "s", float, 3)
     log.channels["Lap Time"].set_samples(t, lt)
     log.add_channel("Throttle Pos", "%", float, 1)
@@ -544,3 +549,30 @@ def test_parse_acti_log_realign_sf_falls_back_without_real_line(tmp_path):
     out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
     beacons = [b[0] for b in out.laps_info["beacons"]]
     assert beacons == pytest.approx([0.0, 10.0, 30.0], abs=0.1)
+
+
+def test_parse_acti_log_realign_sf_recovers_tail_crossing(tmp_path):
+    """AC reset 1 s before file end: the real crossing sits inside the 5 s
+    tail gate, so normal detection misses it; the relaxed pass must still
+    move the end boundary instead of leaving it on the sim line."""
+    src = str(tmp_path / "acti.ld")
+    anchors = _write_realign_synthetic_ld(src, resets=(19.0,), cross_t=20.0, duration_s=21.0)
+    out = DataLog()
+    out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
+    beacons = [b[0] for b in out.laps_info["beacons"]]
+    assert beacons[0] == 0.0
+    assert len(beacons) == 2
+    assert abs(beacons[1] - 20.0) < 0.1
+
+
+def test_parse_acti_log_realign_sf_recovers_head_crossing(tmp_path):
+    """AC reset 8 s after recording start: the real crossing sits inside the
+    15 s head gate; the relaxed pass must still move it."""
+    src = str(tmp_path / "acti.ld")
+    anchors = _write_realign_synthetic_ld(src, resets=(8.0,), cross_t=9.2, duration_s=40.0)
+    out = DataLog()
+    out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
+    beacons = [b[0] for b in out.laps_info["beacons"]]
+    assert beacons[0] == 0.0
+    assert len(beacons) == 2
+    assert abs(beacons[1] - 9.2) < 0.1

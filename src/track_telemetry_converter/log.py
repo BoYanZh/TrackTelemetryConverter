@@ -158,7 +158,8 @@ class DataLog:
             self.channels[channel_name].resample(start, end, frequency, mask_interp_gaps=mask_interp_gaps)
         return frequency
 
-    def detect_beacons(self, min_speed_kmh=30.0, min_time_sec=15.0, min_lap_sec=40.0):
+    def detect_beacons(self, min_speed_kmh=30.0, min_time_sec=15.0, min_lap_sec=40.0,
+                         end_gate_sec=5.0):
         """ Detects trap / sector crossing timestamps from GPS coordinates and traps metadata. """
         traps = list(getattr(self, "traps", []) or [])
 
@@ -225,7 +226,7 @@ class DataLog:
             t_inner = times[1:-1]
             mask &= t_inner >= min_time_sec
             if dur > 0:
-                mask &= (dur - t_inner) >= 5.0
+                mask &= (dur - t_inner) >= end_gate_sec
             if spd_vals is not None:
                 mask &= spd_vals[1:-1] >= min_speed_kmh
             if t_hdg is not None and hdg_vals is not None:

@@ -682,14 +682,50 @@ def _realign_groups_to_real_sf(data_log, groups, resets, duration):
     except (ValueError, TypeError, AttributeError):
         return groups, resets
     found = sorted(t for t in found if 0.0 < t < duration)
-    if not found:
+    if found:
+        keep = [
+            float(r)
+            for r in resets
+            if not any(abs(float(r) - c) <= _REALIGN_MERGE_SEC for c in found)
+        ]
+    else:
+        # Nothing passed the full gates (short file, line inside the head /
+        # tail zones): every sim reset is a replace candidate.
+        keep = [float(r) for r in resets]
+    if keep:
+        # Second pass with the head/tail gates lifted: a kept reset means the
+        # car was at the mod line but GPS saw no valid crossing. When the
+        # trace actually reached the real line just inside the gated zone
+        # (recording starts/ends right at the line), adopt that crossing.
+        # Relaxed crossings only ever replace kept resets -- never add
+        # boundaries -- so pit-lane crawls near the beacon cannot inject
+        # phantom laps.
+        try:
+            relaxed = [
+                t
+                for t, name in data_log.detect_beacons(min_time_sec=0.0, end_gate_sec=0.0)
+                if name == "Start/Finish"
+            ]
+        except (ValueError, TypeError, AttributeError):
+            relaxed = []
+        relaxed = sorted(t for t in relaxed if 0.0 < t < duration)
+        used = set()
+        patched = []
+        for k in keep:
+            cands = [c for c in relaxed if c not in used and abs(c - k) <= _REALIGN_MERGE_SEC]
+            if cands:
+                c = min(cands, key=lambda c: abs(c - k))
+                used.add(c)
+                patched.append(c)
+            else:
+                patched.append(k)
+        keep = patched
+    if not found and keep == [float(r) for r in resets]:
+        # Relaxed pass changed nothing: keep the original Lap Time cuts verbatim.
         return groups, resets
-    keep = [
-        float(r)
-        for r in resets
-        if not any(abs(float(r) - c) <= _REALIGN_MERGE_SEC for c in found)
-    ]
     crossings = sorted(found + [k for k in keep if 0.0 < k < duration])
+    if not crossings:
+        return groups, resets
     bounds = [0.0] + crossings + [duration]
     segs = [(b - a, 0, 0, a, b) for a, b in zip(bounds, bounds[1:], strict=False) if b - a > 0]
     if not segs:
