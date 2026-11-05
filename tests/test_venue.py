@@ -169,14 +169,16 @@ def test_thunderhill_west_gets_shared_beacon_traps():
     log.add_channel("GPS Latitude", "deg", float, 7)
     log.add_channel("GPS Longitude", "deg", float, 7)
     lats, lons, stamps = [], [], []
+    # Two northbound passes through the surveyed West S/F
+    # (39.537464, -122.338729, hdg 354), ~40 s apart.
     for t in range(0, 26):
         stamps.append(float(t))
-        lats.append(39.537866)
-        lons.append(-122.334007 + (t - 21) * 0.0001)
+        lats.append(39.537464 + (t - 21) * 0.0001)
+        lons.append(-122.338729)
     for t in range(66, 81):
         stamps.append(float(t))
-        lats.append(39.537866)
-        lons.append(-122.334007 + (t - 71) * 0.0001)
+        lats.append(39.537464 + (t - 71) * 0.0001)
+        lons.append(-122.338729)
     log.channels["GPS Latitude"].messages = [
         Message(t, v) for t, v in zip(stamps, lats, strict=False)
     ]
