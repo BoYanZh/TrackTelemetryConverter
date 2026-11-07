@@ -441,6 +441,113 @@ def _init_rcz_timebase(data_log, timestamps_ms):
     return times_sec, n_samples, time_origin_epoch_ms
 
 
+# Grid floor for slow-GPS packs: the common parse clock follows the GPS
+# timestamps, so a 1Hz phone GPS collapses faster OBD/CAN streams (e.g. an
+# auxiliary oil-pressure log changing several times per second) onto a 1Hz
+# grid before export resampling ever runs -- `--frequency` cannot recover
+# that detail. Packs already at/above this rate return untouched.
+_GRID_FLOOR_HZ = 10.0
+
+
+def _stream_change_hz(read_channel, ts_key, val_key, epoch_reference):
+    """Genuine value-change rate of one OBD/CAN timestamp stream, or None.
+
+    Consecutive duplicated samples do not count: a slow sensor logged with
+    repeated values never triggers a grid lift.
+    """
+    try:
+        raw_times = _decode_epoch_ms(read_channel(ts_key), epoch_reference)
+    except (ValueError, TypeError):
+        return None
+    if raw_times is None or len(raw_times) < 2:
+        return None
+    try:
+        values = np.frombuffer(read_channel(val_key), dtype="<f8")
+    except (ValueError, TypeError):
+        return None
+    count = min(len(raw_times), len(values))
+    if count < 2:
+        return None
+    span_s = (float(raw_times[count - 1]) - float(raw_times[0])) / 1000.0
+    if not np.isfinite(span_s) or span_s <= 0:
+        return None
+    vals = values[:count]
+    finite = np.isfinite(vals)
+    transitions = int(np.sum((vals[1:] != vals[:-1]) & finite[1:] & finite[:-1]))
+    return transitions / span_s
+
+
+def _fastest_obd_change_hz(namelist, read_channel, epoch_reference):
+    """Highest genuine change rate across OBD/CAN streams; (label, hz)."""
+    best_label, best_hz = None, 0.0
+    for name in sorted(namelist):
+        dirname = os.path.dirname(name)
+        base = os.path.basename(name)
+        match = re.match(r"^channel_12_([^_]+)_([^_]+)_1_1$", base)
+        if match is None:
+            continue
+        dev_sub, pid = match.group(1), match.group(2)
+        companion = ((dirname + "/") if dirname else "") + f"channel2_12_{dev_sub}_{pid}_{pid}_3"
+        if companion not in namelist:
+            continue
+        rate = _stream_change_hz(read_channel, name, companion, epoch_reference)
+        if rate is not None and rate > best_hz:
+            best_label, best_hz = f"12/{dev_sub}/{pid}", rate
+    # Device 4/101 shares one timestamp stream across PIDs.
+    ts_keys = [
+        name for name in namelist
+        if os.path.basename(name) == "channel_4_101_0_1_1"
+    ]
+    for ts_key in sorted(set(ts_keys)):
+        if ts_key not in namelist:
+            continue
+        dirname = os.path.dirname(ts_key)
+        for val_name in sorted(namelist):
+            if os.path.dirname(val_name) != dirname:
+                continue
+            val_match = re.match(r"^channel2_4_101_0_(.+)_3$", os.path.basename(val_name))
+            if val_match is None:
+                continue
+            rate = _stream_change_hz(read_channel, ts_key, val_name, epoch_reference)
+            if rate is not None and rate > best_hz:
+                best_label, best_hz = f"4/101/{val_match.group(1)}", rate
+    return best_label, best_hz
+
+
+def _lift_rcz_grid_for_fast_obd(times_sec, namelist, read_channel, epoch_reference, data_log):
+    """Raise a sub-10Hz GPS grid to 10Hz when OBD/CAN changes faster.
+
+    Returns (times_sec, n_samples, native_grid): native_grid is None unless
+    lifted, in which case it carries the original GPS clock so the GPS
+    family can interpolate onto the denser grid instead of vanishing.
+    """
+    native_grid = None
+    if len(times_sec) >= 2:
+        span = float(times_sec[-1] - times_sec[0])
+        gps_rate = (len(times_sec) - 1) / span if span > 0 else 0.0
+    else:
+        gps_rate = 0.0
+    if gps_rate < _GRID_FLOOR_HZ and gps_rate > 0:
+        pid_label, change_hz = _fastest_obd_change_hz(namelist, read_channel, epoch_reference)
+        if pid_label is not None and change_hz > gps_rate:
+            step = 1.0 / _GRID_FLOOR_HZ
+            grid = np.arange(times_sec[0], times_sec[-1] + step * 0.5, step)
+            if len(grid) >= len(times_sec):
+                native_grid = times_sec
+                times_sec = grid
+                data_log.metadata["rcz_grid_lift"] = {
+                    "from_hz": round(gps_rate, 3),
+                    "to_hz": _GRID_FLOOR_HZ,
+                    "obd_stream": pid_label,
+                    "obd_change_hz": round(change_hz, 3),
+                }
+                logging.getLogger(__name__).debug(
+                    "RCZ grid lifted %.3f Hz -> %.1f Hz on OBD %s (%.3f changes/s)",
+                    gps_rate, _GRID_FLOOR_HZ, pid_label, change_hz,
+                )
+    return times_sec, len(times_sec), native_grid
+
+
 
 
 def _resolve_rcz_gps(data_log, read_channel, namelist, n_samples, declared_gps=None):
@@ -671,12 +778,29 @@ def _populate_rcz_channel(data_log, n_samples, mask, sample_times, name, units, 
 
 
 
-def _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_samples, read_channel, populate_channel):
-    """Populate GPS speed/position/altitude/heading channels."""
+def _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_samples, read_channel, populate_channel,
+                    times_sec=None, native_grid=None):
+    """Populate GPS speed/position/altitude/heading channels.
+
+    On a lifted grid (10Hz floor over a slower GPS clock) the raw GPS
+    files are shorter than the grid, so they interpolate onto it instead
+    of vanishing; unlifted packs keep the exact 1:1 truncation path.
+    """
     if gps_prefix:
         # 2. Parse Speed
         if gps_speed_values is not None:
             populate_channel(CH_GROUND_SPEED, "km/h", gps_speed_values, 2)
+
+        def _fit(raw, scale=1.0):
+            arr = np.asarray(raw, dtype=np.float64)
+            if len(arr) >= n_samples:
+                return arr[:n_samples] * scale
+            if (
+                native_grid is not None and times_sec is not None
+                and len(arr) == len(native_grid)
+            ):
+                return np.interp(times_sec, native_grid, arr) * scale
+            return None
 
         # 3. Parse Latitude & Longitude
         _ll_key = gps_prefix + "3_1"
@@ -686,22 +810,29 @@ def _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_sample
                 raw_ll = raw_ll[:n_samples * 2].reshape(-1, 2)
                 populate_channel(CH_GPS_LATITUDE, "deg", raw_ll[:, 0] / 6000000.0, 7)
                 populate_channel(CH_GPS_LONGITUDE, "deg", raw_ll[:, 1] / 6000000.0, 7)
+            elif native_grid is not None and times_sec is not None and len(raw_ll) // 2 == len(native_grid):
+                pairs = raw_ll[:len(native_grid) * 2].reshape(-1, 2).astype(np.float64)
+                populate_channel(CH_GPS_LATITUDE, "deg",
+                                 np.interp(times_sec, native_grid, pairs[:, 0]) / 6000000.0, 7)
+                populate_channel(CH_GPS_LONGITUDE, "deg",
+                                 np.interp(times_sec, native_grid, pairs[:, 1]) / 6000000.0, 7)
 
         # 4. Parse Altitude
         _alt_key = gps_prefix + "5_0"
         if _alt_key in namelist:
-            raw_alt = np.frombuffer(read_channel(_alt_key), dtype="<i4")
-            if len(raw_alt) >= n_samples:
-                populate_channel(CH_GPS_ALTITUDE, "m", raw_alt / 1000.0)
+            fitted = _fit(np.frombuffer(read_channel(_alt_key), dtype="<i4"), 1.0 / 1000.0)
+            if fitted is not None:
+                populate_channel(CH_GPS_ALTITUDE, "m", fitted)
 
         # 5. Parse GPS Heading
         _hdg_key = gps_prefix + "6_0"
         if _hdg_key in namelist:
-            raw_hdg = np.frombuffer(read_channel(_hdg_key), dtype="<i4")
-            if len(raw_hdg) >= n_samples:
-                populate_channel(CH_GPS_HEADING, "deg", raw_hdg / 1000.0)
+            fitted = _fit(np.frombuffer(read_channel(_hdg_key), dtype="<i4"), 1.0 / 1000.0)
+            if fitted is not None:
+                populate_channel(CH_GPS_HEADING, "deg", fitted)
 
-def _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channel, populate_channel):
+def _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channel, populate_channel,
+                          times_sec=None, native_grid=None):
     """Collect GPS-family value files of verified + uncertain semantics.
 
     30002/30003/30007/46 ride the GPS clock 1:1 (4 bytes/sample) and are
@@ -721,9 +852,16 @@ def _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channe
         if key not in namelist:
             return None
         values = np.frombuffer(read_channel(key), dtype="<i4")
-        if len(values) < n_samples:
-            return None
-        return values[:n_samples].astype(np.float64)
+        if len(values) >= n_samples:
+            return values[:n_samples].astype(np.float64)
+        if (
+            native_grid is not None and times_sec is not None
+            and len(values) == len(native_grid)
+        ):
+            return np.interp(
+                times_sec, native_grid, values.astype(np.float64),
+            )
+        return None
 
     # 30002: modern packs store raw counts (12 ~ 16); the 2026-02-19
     # pack stores count x 1000 (3000 ~ 16000). Counts above 100 cannot be
@@ -1336,6 +1474,20 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
             declared_gps=decl.get("gps"),
         )
 
+        # Sub-10Hz GPS grid with a faster genuinely-changing OBD/CAN
+        # stream lifts to the 10Hz floor so the faster stream survives;
+        # packs already at/above 10Hz return untouched.
+        times_sec, n_samples, native_grid = _lift_rcz_grid_for_fast_obd(
+            times_sec, namelist, read_channel, epoch_reference, data_log,
+        )
+        if native_grid is not None:
+            if gps_speed_values is not None and len(gps_speed_values) == len(native_grid):
+                gps_speed_values = np.interp(
+                    times_sec, native_grid, np.asarray(gps_speed_values, dtype=float),
+                )
+            else:
+                gps_speed_values = None
+
         reconstructed_laps, lap_numbers, stint_duration_s = _reconstruct_rcz_laps(
             session_json, active_stint, times_sec, timestamps_ms, first_t, min_lap_sec, gps_speed_values, n_samples,
         )
@@ -1350,8 +1502,10 @@ def parse_rcz_log(data_log, rcz_file_path, target_lap=None, target_stint=None,
         populate_channel(CH_LAP_NUMBER, "", lap_numbers, 0)
         # Running Time Channel
         populate_channel(CH_RUNNING_TIME, "s", export_times_sec, 2)
-        _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_samples, read_channel, populate_channel)
-        _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channel, populate_channel)
+        _populate_rcz_gps(data_log, namelist, gps_prefix, gps_speed_values, n_samples, read_channel, populate_channel,
+                          times_sec=times_sec, native_grid=native_grid)
+        _populate_rcz_gps_aux(data_log, namelist, gps_prefix, n_samples, read_channel, populate_channel,
+                              times_sec=times_sec, native_grid=native_grid)
 
         _populate_rcz_magnetometer(data_log, namelist, times_sec, n_samples, time_origin_epoch_ms, mask_interp_gaps, read_channel, populate_channel)
 

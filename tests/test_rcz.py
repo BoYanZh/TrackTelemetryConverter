@@ -1635,3 +1635,103 @@ def test_rcz_unknown_suffix_warns_without_changing_parse(tmp_path, capsys):
         np.testing.assert_array_equal(
             extended.channels[name].values, base.channels[name].values,
         )
+
+
+def _write_grid_probe_rcz(path, gps_step_ms, obd_step_ms, obd_values, gps_type="100"):
+    """Synthetic single-stint pack: slow GPS + device-12 OBD oil."""
+    first = 1_700_000_000_000
+    gps_ms = np.arange(first, first + 20_001, gps_step_ms, dtype="<i8")
+    n_gps = len(gps_ms)
+    speed = np.full(n_gps, 15_000, dtype="<i4")
+    lat_lon = np.column_stack((
+        np.arange(n_gps, dtype="<i4") + 222_000_000,
+        np.arange(n_gps, dtype="<i4") - 732_000_000,
+    ))
+    obd_ms = np.arange(first, first + 20_001, obd_step_ms, dtype="<i8")
+    session = {
+        "firstTimestamp": first,
+        "timeCreated": first,
+        "trackName": "Synthetic Grid Track",
+        "laps": [],
+    }
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("session.json", json.dumps(session))
+        archive.writestr(f"channel_1_{gps_type}_0_1_1", gps_ms.tobytes())
+        archive.writestr(f"channel_1_{gps_type}_0_4_0", speed.tobytes())
+        archive.writestr(f"channel_1_{gps_type}_0_3_1", lat_lon.astype("<i4").tobytes())
+        archive.writestr("channel_12_200_1007_1_1", obd_ms.tobytes())
+        archive.writestr(
+            "channel2_12_200_1007_1007_3",
+            np.asarray(obd_values, dtype="<f8").tobytes(),
+        )
+
+
+def test_rcz_slow_gps_grid_lifts_to_10hz_for_fast_obd(tmp_path):
+    obd_ms = np.arange(1_700_000_000_000, 1_700_000_020_001, 100, dtype="<i8")
+    source = tmp_path / "lift.rcz"
+    _write_grid_probe_rcz(
+        str(source), 1_000, 100,
+        400.0 + np.arange(len(obd_ms), dtype=float),
+    )
+    log = DataLog()
+    log.from_rcz_log(str(source))
+    lift = log.metadata.get("rcz_grid_lift")
+    assert lift is not None
+    assert lift["from_hz"] == pytest.approx(1.0)
+    assert lift["to_hz"] == 10.0
+    assert lift["obd_stream"] == "12/200/1007"
+    oil = log.channels["Engine Oil Press"]
+    assert len(oil.timestamps) == 201
+    np.testing.assert_allclose(np.diff(oil.timestamps), 0.1, atol=1e-9)
+    # GPS family survives via interpolation instead of vanishing.
+    for name in ("Ground Speed", "GPS Latitude", "GPS Longitude"):
+        assert name in log.channels
+        assert len(log.channels[name].timestamps) == 201
+    assert oil.values[0] == pytest.approx(400.0)
+    assert oil.values[-1] == pytest.approx(400.0 + len(obd_ms) - 1)
+
+
+def test_rcz_slow_gps_without_changing_obd_stays_put(tmp_path):
+    obd_ms = np.arange(1_700_000_000_000, 1_700_000_020_001, 100, dtype="<i8")
+    source = tmp_path / "stale.rcz"
+    _write_grid_probe_rcz(
+        str(source), 1_000, 100,
+        np.full(len(obd_ms), 300.0),
+    )
+    log = DataLog()
+    log.from_rcz_log(str(source))
+    assert "rcz_grid_lift" not in log.metadata
+    oil = log.channels["Engine Oil Press"]
+    assert len(oil.timestamps) == 21
+    np.testing.assert_allclose(np.diff(oil.timestamps), 1.0, atol=1e-9)
+
+
+def test_rcz_fast_gps_grid_ignores_faster_obd(tmp_path):
+    obd_ms = np.arange(1_700_000_000_000, 1_700_000_002_001, 25, dtype="<i8")
+    first = 1_700_000_000_000
+    gps_ms = np.arange(first, first + 2_001, 40, dtype="<i8")
+    n_gps = len(gps_ms)
+    session = {
+        "firstTimestamp": first,
+        "timeCreated": first,
+        "trackName": "Synthetic Grid Track",
+        "laps": [],
+    }
+    source = tmp_path / "fast.rcz"
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("session.json", json.dumps(session))
+        archive.writestr("channel_1_200_0_1_1", gps_ms.tobytes())
+        archive.writestr(
+            "channel_1_200_0_4_0", np.full(n_gps, 15_000, dtype="<i4").tobytes(),
+        )
+        archive.writestr("channel_12_200_1007_1_1", obd_ms.tobytes())
+        archive.writestr(
+            "channel2_12_200_1007_1007_3",
+            (400.0 + np.arange(len(obd_ms), dtype=float)).tobytes(),
+        )
+    log = DataLog()
+    log.from_rcz_log(str(source))
+    assert "rcz_grid_lift" not in log.metadata
+    oil = log.channels["Engine Oil Press"]
+    assert len(oil.timestamps) == n_gps
+    np.testing.assert_allclose(np.diff(oil.timestamps), 0.04, atol=1e-9)
