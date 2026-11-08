@@ -234,6 +234,13 @@ def build_parser():
 
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "motec-sync":
+        from .video_sync_cli import main as video_sync_main
+
+        return video_sync_main(argv[1:])
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

@@ -172,6 +172,30 @@ own `<backup>_sessions/` directory. `--output`, `--session ID`, `--stint`, and
 
 Run `track-telemetry --help` for the authoritative option list.
 
+## Synchronize a video with an existing MoTeC log
+
+TTC owns MoTeC video association and synchronization. Supply a confirmed
+video-to-RCZ mapping; TTC checks the matching RCZ/stint against the LD's
+speed and RPM/GPS samples before updating the LDX sidecar:
+
+```powershell
+track-telemetry motec-sync --ld session.ld --rcz session.rcz --stint 4 `
+  --video camera.mp4 --offset 32.019883
+```
+
+The mapping is `RCZ seconds = video seconds * rate + offset`. For a rendered
+clip, `--video-start` gives the original camera timestamp that became clip
+time zero. TTC subtracts the LD's first `Running Time` value, so cropped logs
+keep the correct synchronization even when their header date is unchanged.
+`--video-start-utc` optionally verifies the confirmed camera start against
+the RCZ's absolute origin. Only rate 1 is currently supported.
+
+The command preserves existing lap markers, details, comments, and other
+camera views. Changed sidecars are backed up and replaced atomically;
+unchanged sync points are skipped. Use `--dry-run` to validate without writing.
+TTC's core command takes explicit parameters and does not import ApexLayer
+or depend on its private state format.
+
 ## Behavior
 
 - RCZ sessions with multiple stints are split automatically when `--stint all`
