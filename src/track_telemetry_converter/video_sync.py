@@ -101,7 +101,9 @@ def verify_ld_source(
         valid_source_values = valid_source_values[unique_indices]
 
         finite_ld_times = ld_times[np.isfinite(ld_times)]
-        if finite_ld_times.size:
+        # GPS speed anchors the recording extent. Auxiliary OBD channels may
+        # begin later or end earlier; LD resampling pads those boundaries.
+        if finite_ld_times.size and name == "Ground Speed":
             source_step = float(np.median(np.diff(valid_source_times)))
             coverage_tolerance = max(0.05, source_step * 1.5)
             outside = max(

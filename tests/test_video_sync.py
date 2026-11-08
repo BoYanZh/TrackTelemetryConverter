@@ -87,6 +87,19 @@ def _fixture(tmp_path, monkeypatch, *, bad_speed=False):
     }
 
 
+def test_source_verification_allows_padded_auxiliary_channel_boundaries():
+    start, ld, source = _channels()
+    rpm = source["Engine RPM"]
+    inside = (rpm.times >= start + 2.0) & (rpm.times <= start + 15.0)
+    source["Engine RPM"] = SimpleNamespace(times=rpm.times[inside], values=rpm.values[inside])
+    assert video_sync.verify_ld_source(start, ld, source)["Engine RPM"] < 1e-6
+    speed = source["Ground Speed"]
+    inside = (speed.times >= start + 2.0) & (speed.times <= start + 15.0)
+    source["Ground Speed"] = SimpleNamespace(times=speed.times[inside], values=speed.values[inside])
+    with pytest.raises(VideoSyncError, match="Ground Speed time range"):
+        video_sync.verify_ld_source(start, ld, source)
+
+
 def test_exports_sync_point_and_preserves_unrelated_ldx_content(tmp_path, monkeypatch):
     files = _fixture(tmp_path, monkeypatch)
 
