@@ -24,6 +24,80 @@ def _clean_ascii(text):
     return s.encode("ascii", errors="ignore").decode("ascii")
 
 
+def _classify_beacon_markers(beacons):
+    """Split raw beacon input into lap beacons vs sector splits.
+
+    Names that read as a lap line (start/finish/sf/beacon/lap*) are lap
+    beacons; anything else (T1, Split 1, S1, ...) is a sector split.
+    """
+    detected_lap_beacons = []
+    split_beacons = []
+    if not beacons:
+        return detected_lap_beacons, split_beacons
+    for item in beacons:
+        b_time = item[0] if isinstance(item, (tuple, list)) else item
+        b_name = item[1] if isinstance(item, (tuple, list)) and len(item) > 1 else "Beacon"
+        b_name_clean = _clean_ascii(b_name)
+        b_name_lower = b_name_clean.strip().lower()
+        if b_name_lower in ("start/finish", "sf", "beacon") or b_name_lower.startswith("start") or b_name_lower.startswith("finish") or b_name_lower.startswith("lap"):
+            detected_lap_beacons.append((b_time, b_name_clean))
+        else:
+            split_beacons.append((b_time, b_name_clean))
+    return detected_lap_beacons, split_beacons
+
+
+def _lap_beacons_from_info(laps_info, detected_lap_beacons):
+    """Lap beacons, preferring source lap timing over GPS crossing detection."""
+    lap_beacons = []
+    b_from_laps = laps_info.get("beacons", []) if laps_info else []
+    if b_from_laps:
+        return [(t, _clean_ascii(n)) for t, n in b_from_laps]
+    laps = laps_info.get("laps", []) if laps_info else []
+    timed_laps = [
+        lap
+        for lap in laps
+        if str(lap.get("type", "Timed")).strip().lower() == "timed"
+        and lap.get("start_time") is not None
+        and lap.get("end_time") is not None
+        and float(lap["end_time"]) > float(lap["start_time"])
+    ]
+    if not timed_laps:
+        return list(detected_lap_beacons)
+    boundaries = [float(timed_laps[0]["start_time"])]
+    boundaries.extend(float(lap["end_time"]) for lap in timed_laps)
+    for boundary in boundaries:
+        if not lap_beacons or abs(boundary - lap_beacons[-1][0]) > 1e-9:
+            lap_beacons.append((boundary, "Start/Finish"))
+    return lap_beacons
+
+
+def _collect_section_markers(laps_info, split_beacons):
+    """Merge GPS trap splits with game sector splits into one time-sorted list."""
+    sector_from_laps = []
+    if laps_info:
+        for key in ("sector_beacons", "splits", "sectors"):
+            vals = laps_info.get(key)
+            if not vals:
+                continue
+            for item in vals:
+                try:
+                    t = float(item[0]) if isinstance(item, (tuple, list)) else float(item)
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if not math.isfinite(t):
+                    continue
+                name = item[1] if isinstance(item, (tuple, list)) and len(item) > 1 else "Split"
+                name = _clean_ascii(name) or "Split"
+                sector_from_laps.append((t, name))
+    merged = sorted(split_beacons + sector_from_laps, key=lambda kv: kv[0])
+    deduped = []
+    for t, name in merged:
+        if deduped and abs(t - deduped[-1][0]) <= 1e-9:
+            continue
+        deduped.append((t, name))
+    return deduped
+
+
 def write_ldx(motec_log, filename, laps_info=None, beacons=None):
     """Writes an XML .ldx file with lap markers, sector beacons, and metadata.
 
@@ -47,43 +121,10 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
     marker_block = ET.SubElement(layer, "MarkerBlock")
     beacon_group = ET.SubElement(marker_block, "MarkerGroup", {"Name": "Beacons", "Index": "3"})
 
-    detected_lap_beacons = []
-    split_beacons = []
-
-    if beacons:
-        for item in beacons:
-            b_time = item[0] if isinstance(item, (tuple, list)) else item
-            b_name = item[1] if isinstance(item, (tuple, list)) and len(item) > 1 else "Beacon"
-            b_name_clean = _clean_ascii(b_name)
-            b_name_lower = b_name_clean.strip().lower()
-            if b_name_lower in ("start/finish", "sf", "beacon") or b_name_lower.startswith("start") or b_name_lower.startswith("finish") or b_name_lower.startswith("lap"):
-                detected_lap_beacons.append((b_time, b_name_clean))
-            else:
-                split_beacons.append((b_time, b_name_clean))
+    detected_lap_beacons, split_beacons = _classify_beacon_markers(beacons)
 
     # Prefer source lap timing over GPS crossing detection.
-    lap_beacons = []
-    b_from_laps = laps_info.get("beacons", []) if laps_info else []
-    if b_from_laps:
-        lap_beacons = [ (t, _clean_ascii(n)) for t, n in b_from_laps ]
-    else:
-        laps = laps_info.get("laps", []) if laps_info else []
-        timed_laps = [
-            lap
-            for lap in laps
-            if str(lap.get("type", "Timed")).strip().lower() == "timed"
-            and lap.get("start_time") is not None
-            and lap.get("end_time") is not None
-            and float(lap["end_time"]) > float(lap["start_time"])
-        ]
-        if timed_laps:
-            boundaries = [float(timed_laps[0]["start_time"])]
-            boundaries.extend(float(lap["end_time"]) for lap in timed_laps)
-            for boundary in boundaries:
-                if not lap_beacons or abs(boundary - lap_beacons[-1][0]) > 1e-9:
-                    lap_beacons.append((boundary, "Start/Finish"))
-        else:
-            lap_beacons = detected_lap_beacons
+    lap_beacons = _lap_beacons_from_info(laps_info, detected_lap_beacons)
 
     for b_time, _ in lap_beacons:
         t_us = b_time * 1e6
@@ -97,30 +138,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
 
     # GPS trap splits (split_beacons) and game sector splits (laps_info,
     # e.g. ACTI "S1"/"S2") merge into one Sections group.
-
-    sector_from_laps = []
-    if laps_info:
-        for key in ("sector_beacons", "splits", "sectors"):
-            vals = laps_info.get(key)
-            if not vals:
-                continue
-            for item in vals:
-                try:
-                    t = float(item[0]) if isinstance(item, (tuple, list)) else float(item)
-                except (TypeError, ValueError, IndexError):
-                    continue
-                if not math.isfinite(t):
-                    continue
-                name = item[1] if isinstance(item, (tuple, list)) and len(item) > 1 else "Split"
-                name = _clean_ascii(name) or "Split"
-                sector_from_laps.append((t, name))
-
-    merged_sections = sorted(split_beacons + sector_from_laps, key=lambda kv: kv[0])
-    deduped_sections = []
-    for t, name in merged_sections:
-        if deduped_sections and abs(t - deduped_sections[-1][0]) <= 1e-9:
-            continue
-        deduped_sections.append((t, name))
+    deduped_sections = _collect_section_markers(laps_info, split_beacons)
 
     if deduped_sections:
         section_group = ET.SubElement(marker_block, "MarkerGroup", {"Name": "Sections", "Index": "4"})
