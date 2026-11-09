@@ -10,7 +10,12 @@ from types import MappingProxyType
 
 import numpy as np
 
-from ..channels import CH_ACCELERATOR_POS, CHANNEL_ALIASES
+from ..channels import (
+    CH_ACCELERATOR_POS,
+    CH_GPS_LATITUDE,
+    CH_GPS_LONGITUDE,
+    CHANNEL_ALIASES,
+)
 from ..lap_view import ChannelView, readonly
 from ..provenance import record_channel_provenance
 
@@ -359,3 +364,195 @@ def parse_vbo_log(data_log, log_lines, target_lap=None, *, raw_channels=None):
         data_log, cols_raw, raw_keys, selected_raw_indices, header_lines,
         selected_raw_buffers, source_time_parts, elapsed_parts,
     )
+    _load_vbo_laptiming_traps(data_log, sections)
+
+
+#: Sanity bounds for [laptiming] gate coordinates (decimal degrees).
+_VBO_GATE_MAX_LAT_DEG = 90.0
+_VBO_GATE_MAX_LON_DEG = 180.0
+#: A parsed gate farther than this from the file's own GPS trace is not the
+#: driven track (stale map) and is skipped.
+_VBO_GATE_MAX_ANCHOR_DEG = 0.5
+#: |minutes| above this must be longitude (latitude caps at 90 * 60).
+_VBO_LON_MINUTES_FLOOR = 90.0 * 60.0
+
+
+def _resolve_gate_pair(first_raw, second_raw, anchor):
+    """Assign ``(lat_deg, lon_deg)`` for one gate endpoint pair.
+
+    Writers disagree on field order (both long,lat and lat,long observed),
+    so each pair is resolved independently: impossible latitudes are
+    rejected, then the file's own GPS centroid picks the winner, else a
+    minutes-magnitude rule (``|lon|`` > 90 * 60 settles it). Returns
+    ``(lat, lon)`` in decimal degrees, or ``None`` when unusable.
+    """
+    options = []
+    for lat_raw, lon_raw in ((first_raw, second_raw), (second_raw, first_raw)):
+        lat = _parse_vbo_latlon(lat_raw, is_lon=False)
+        lon = _parse_vbo_latlon(lon_raw, is_lon=True)
+        if abs(lat) > _VBO_GATE_MAX_LAT_DEG or abs(lon) > _VBO_GATE_MAX_LON_DEG:
+            continue
+        options.append((lat_raw, lon_raw, lat, lon))
+    if not options:
+        return None
+    if anchor is not None:
+        best, best_dist = None, None
+        for opt in options:
+            dist = abs(opt[2] - anchor[0]) + abs(opt[3] - anchor[1])
+            if best is None or dist < best_dist:
+                best, best_dist = opt, dist
+        if best_dist is not None and best_dist <= _VBO_GATE_MAX_ANCHOR_DEG:
+            return best[2], best[3]
+        return None
+    if len(options) == 1:
+        return options[0][2], options[0][3]
+
+    def _magnitude(raw):
+        try:
+            return abs(float(str(raw).strip().lstrip("+-")))
+        except ValueError:
+            return 0.0
+
+    big = [opt for opt in options if _magnitude(opt[1]) > _VBO_LON_MINUTES_FLOOR]
+    if len(big) == 1:
+        return big[0][2], big[0][3]
+    return None
+
+
+#: A gate encounter reading more parallel than this (degrees) is a drive-by,
+#: not a line crossing, and is rejected as a trap.
+_VBO_GATE_MIN_CROSS_ANGLE_DEG = 30.0
+#: Encounters farther than this from the gate segment are not encounters.
+_VBO_GATE_MAX_ENCOUNTER_M = 50.0
+
+
+def _gate_is_crossed(lats, lons, lat1, lon1, lat2, lon2):
+    """Whether the driven trace truly crosses a gate segment.
+
+    RaceChrono maps sometimes carry along-track snippets (racing-line
+    geometry) instead of crossable lines: a proximity-only check would
+    "detect" those at the abeam moment with a systematic time error. A real
+    crossing needs the closest approach on the segment span with the course
+    roughly perpendicular to the gate. Returns ``True`` only then.
+    """
+    try:
+        lats = np.asarray(lats, dtype=float)
+        lons = np.asarray(lons, dtype=float)
+    except (TypeError, ValueError):
+        return False
+    if lats.shape != lons.shape or lats.size < 2:
+        return False
+    if not all(np.isfinite(v) for v in (lat1, lon1, lat2, lon2)):
+        return False
+    mlat, mlon = (lat1 + lat2) / 2, (lon1 + lon2) / 2
+    ax, ay = (lon1 - mlon) * 85670.0, (lat1 - mlat) * 111000.0
+    bx, by = (lon2 - mlon) * 85670.0, (lat2 - mlat) * 111000.0
+    dx, dy = bx - ax, by - ay
+    if dx * dx + dy * dy < 1.0:
+        return False
+    ex = (lons - mlon) * 85670.0
+    ey = (lats - mlat) * 111000.0
+    denom = dx * dx + dy * dy
+    u = ((ex - ax) * dx + (ey - ay) * dy) / denom
+    closest = np.hypot(ex - (ax + np.clip(u, 0.0, 1.0) * dx),
+                       ey - (ay + np.clip(u, 0.0, 1.0) * dy))
+    i = int(np.argmin(closest))
+    if closest[i] >= _VBO_GATE_MAX_ENCOUNTER_M:
+        return False
+    if not 0.0 <= float(u[i]) <= 1.0:
+        return False
+    vx = np.gradient(ex)
+    vy = np.gradient(ey)
+    course = float(np.degrees(np.arctan2(vx[i], vy[i])) % 360.0)
+    gate_hdg = float(np.degrees(np.arctan2(dx, dy)) % 360.0)
+    delta = abs((course - gate_hdg + 180.0) % 360.0 - 180.0)
+    return min(delta, 180.0 - delta) > _VBO_GATE_MIN_CROSS_ANGLE_DEG
+
+
+def _load_vbo_laptiming_traps(data_log, sections):
+    """Load [laptiming] Start/Split gates into ``data_log.traps``.
+
+    RaceChrono exports the driven track's gates here
+    (``Start lon1 lat1 lon2 lat2 ¬ name``); field order is resolved per
+    endpoint pair because writers disagree. A gate becomes a trap only if
+    the driven trace truly crosses its segment (see
+    :func:`_gate_is_crossed`): along-track snippets that a proximity check
+    would mistime are skipped. Gate midpoints become traps so the existing
+    GPS-crossing detector cuts laps and sector splits with no further
+    changes. Files without the section keep ``traps`` untouched.
+    """
+    raw_lines = sections.get("laptiming", [])
+    if not raw_lines:
+        return
+    anchor = None
+    trace = None
+    try:
+        lat_ch = data_log.channels.get(CH_GPS_LATITUDE)
+        lon_ch = data_log.channels.get(CH_GPS_LONGITUDE)
+        if (
+            lat_ch is not None
+            and lon_ch is not None
+            and len(lat_ch.values)
+            and len(lon_ch.values)
+        ):
+            lats = np.asarray(lat_ch.values, dtype=float)
+            lons = np.asarray(lon_ch.values, dtype=float)
+            if lats.shape == lons.shape and lats.size and np.all(np.isfinite(lats)) \
+                    and np.all(np.isfinite(lons)):
+                trace = (lats, lons)
+                anchor = (float(np.mean(lats)), float(np.mean(lons)))
+                if not (np.isfinite(anchor[0]) and np.isfinite(anchor[1])):
+                    anchor = None
+    except (TypeError, ValueError, AttributeError):
+        anchor = None
+    if trace is None:
+        # Without a GPS trace gates can be neither ordered reliably nor
+        # verified as crossings -- and nothing downstream could detect
+        # them anyway.
+        return
+    seen = set()
+    split_no = 0
+    for raw_line in raw_lines:
+        line = str(raw_line).strip()
+        if not line:
+            continue
+        head, _, name = line.partition("¬")
+        name = name.strip()
+        tokens = head.split()
+        if len(tokens) < 5:
+            continue
+        kind = tokens[0].strip().lower()
+        endpoints = []
+        valid = True
+        for first_raw, second_raw in ((tokens[1], tokens[2]), (tokens[3], tokens[4])):
+            resolved = _resolve_gate_pair(first_raw, second_raw, anchor)
+            if resolved is None:
+                valid = False
+                break
+            endpoints.append(resolved)
+        if not valid:
+            continue
+        (lat1, lon1), (lat2, lon2) = endpoints
+        key = (round((lat1 + lat2) / 2, 6), round((lon1 + lon2) / 2, 6))
+        if key in seen:
+            continue
+        seen.add(key)
+        if not _gate_is_crossed(trace[0], trace[1], lat1, lon1, lat2, lon2):
+            continue
+        if not name:
+            if kind == "start":
+                name = "Start/Finish"
+            elif kind == "split":
+                split_no += 1
+                name = f"Split {split_no}"
+            else:
+                name = tokens[0].strip() or "Split"
+        data_log.traps.append({
+            "name": name,
+            "lat": (lat1 + lat2) / 2,
+            "lon": (lon1 + lon2) / 2,
+            "lat1": lat1,
+            "lon1": lon1,
+            "lat2": lat2,
+            "lon2": lon2,
+        })

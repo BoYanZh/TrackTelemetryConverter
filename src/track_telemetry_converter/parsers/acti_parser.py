@@ -563,7 +563,167 @@ def _opening_group_is_complete_lap(data_log, t_end_first, dur_first):
     return True
 
 
-def _build_laps_info(groups, freq, resets=None, first_timed=False):
+#: Heuristics for game sector splits derived from the ACTI "Last Sector Time"
+#: channel (see _extract_sector_beacons). A sector must last at least this
+#: long: shorter gaps are channel flicker, not completed sectors. A latched
+#: sector time outside [_ACTI_SECTOR_MIN_SEC, _ACTI_SECTOR_MAX_SEC] is pit
+#: standing or a stale value, never a real sector.
+_ACTI_SECTOR_MIN_SEC = 3.0
+_ACTI_SECTOR_MAX_SEC = 300.0
+#: Splits this close to a Start/Finish beacon are the lap-end latch of the
+#: final sector (already rendered as the lap beacon), not interior splits.
+_ACTI_SECTOR_BEACON_GAP_SEC = 0.5
+
+
+def _extract_sector_beacons(ld, groups, freq, resets=None):
+    """Game sector splits from "Last Sector Time" latch edges.
+
+    The game latches each completed sector's duration into Last Sector Time,
+    so every step change marks a sector crossing -- no GPS trap needed. Each
+    interior latch becomes ``(cum_time, "S1"/"S2"/...)`` in the same cum time
+    base as ``resets`` (sample-fraction of the group's final duration, so the
+    official Last Lap Time scaling applies to sectors too). The lap-end latch
+    of the final sector coincides with the Start/Finish beacon and is skipped
+    (both by construction -- it lands on the next group's first sample -- and
+    by the beacon-gap guard for off-by-one latches).
+
+    Returns ``[]`` when the channel is missing or its grid does not match the
+    Lap Time grid the groups index. Post ``--realign-sf`` rebuilds carry
+    ``(dur, 0, 0, t_start, t_end)`` and cannot be mapped back to samples --
+    those go through :func:`_extract_realigned_sector_beacons` instead.
+    """
+    ch = _get_ld_channel(ld, "Last Sector Time")
+    if ch is None:
+        return []
+    try:
+        lst = np.asarray(ch.data, dtype=float)
+    except (TypeError, ValueError):
+        return []
+    if lst.size == 0 or not groups:
+        return []
+    try:
+        n_lt = max(int(item[2]) for item in groups)
+    except (TypeError, ValueError, IndexError):
+        return []
+    if lst.shape[0] != n_lt:
+        return []
+    try:
+        freq = float(freq)
+    except (TypeError, ValueError):
+        return []
+    beacon_times = []
+    if resets:
+        try:
+            beacon_times = [float(t) for t in resets]
+        except (TypeError, ValueError):
+            beacon_times = []
+    if not beacon_times or beacon_times[0] > 1e-9:
+        beacon_times = [0.0] + beacon_times
+    sectors = []
+    for item in groups:
+        try:
+            dur = float(item[0])
+            s, e = int(item[1]), int(item[2])
+            t_start = float(item[3]) if len(item) >= 5 else s / freq
+        except (TypeError, ValueError, IndexError, ZeroDivisionError):
+            continue
+        if not dur > 0 or e <= s + 1 or s < 0 or e > lst.shape[0]:
+            continue
+        seg = lst[s:e]
+        found = []
+        for j in range(len(seg) - 1):
+            a, b = seg[j], seg[j + 1]
+            if not (np.isfinite(a) and np.isfinite(b)) or a == b:
+                continue
+            try:
+                latched = abs(float(b))
+            except (TypeError, ValueError):
+                continue
+            if not _ACTI_SECTOR_MIN_SEC <= latched <= _ACTI_SECTOR_MAX_SEC:
+                continue
+            gj = s + j + 1
+            t = t_start + (gj - s) / (e - s) * dur
+            if any(abs(t - bt) < _ACTI_SECTOR_BEACON_GAP_SEC for bt in beacon_times):
+                continue
+            if found and t - found[-1][0] < _ACTI_SECTOR_MIN_SEC:
+                continue
+            found.append((t, latched))
+        for i, (t, _latched) in enumerate(found):
+            sectors.append((t, f"S{i + 1}"))
+    sectors.sort(key=lambda kv: kv[0])
+    return sectors
+
+
+def _extract_realigned_sector_beacons(ld, segments, new_beacon_times, duration):
+    """Game sector splits on the raw file clock for rebuilt real-S/F segments.
+
+    Post ``--realign-sf`` the lap bounds live on the file clock (GPS crossing
+    times plus kept sim resets, ending at the log duration), while the game
+    cum base they were cut from no longer applies -- so sectors are rebuilt
+    here instead of remapped: every Last Sector Time latch edge file-wide
+    becomes a file-clock split at ``sample / channel_freq``. Unlike the cum
+    path, the lap-end latch at the mod line is *kept*: the mod line sits
+    inside the rebuilt laps, so that latch is a genuine interior split of
+    the new lap. Splits are then assigned to whichever rebuilt segment
+    contains them and named ``S1..Sn`` per segment in crossing order, which
+    stays correct even when one rebuilt lap straddles two sim laps (the sim
+    line mid-lap contributes an extra split).
+
+    Returns ``[]`` without the channel or without usable segments.
+    """
+    ch = _get_ld_channel(ld, "Last Sector Time")
+    if ch is None:
+        return []
+    try:
+        lst = np.asarray(ch.data, dtype=float)
+        f_lst = float(ch.freq) if ch.freq else 0.0
+        dur_f = float(duration)
+    except (TypeError, ValueError):
+        return []
+    if lst.size < 2 or not f_lst > 0 or not dur_f > 0 or not segments:
+        return []
+    try:
+        beacons = sorted(float(t) for t in (new_beacon_times or []))
+    except (TypeError, ValueError):
+        return []
+    if not beacons or beacons[0] > 1e-9:
+        beacons = [0.0] + beacons
+    prev, cur = lst[:-1], lst[1:]
+    changed = np.nonzero(np.isfinite(prev) & np.isfinite(cur) & (prev != cur))[0]
+    splits = []
+    for i in changed:
+        try:
+            latched = abs(float(lst[int(i) + 1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not _ACTI_SECTOR_MIN_SEC <= latched <= _ACTI_SECTOR_MAX_SEC:
+            continue
+        t = (int(i) + 1) / f_lst
+        if not 0.0 < t < dur_f:
+            continue
+        if any(abs(t - bt) < _ACTI_SECTOR_BEACON_GAP_SEC for bt in beacons):
+            continue
+        if splits and t - splits[-1] < _ACTI_SECTOR_MIN_SEC:
+            continue
+        splits.append(t)
+    named = []
+    for item in segments:
+        if len(item) < 5:
+            continue
+        try:
+            a, b = float(item[3]), float(item[4])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not b > a:
+            continue
+        inside = sorted(t for t in splits if a + 1e-9 < t < b - 1e-9)
+        for k, t in enumerate(inside):
+            named.append((t, f"S{k + 1}"))
+    named.sort(key=lambda kv: kv[0])
+    return named
+
+
+def _build_laps_info(groups, freq, resets=None, first_timed=False, sector_beacons=None):
     """laps_info from Lap Time groups: first row is the Out Lap, unless it is
     a complete lap in disguise.
 
@@ -585,6 +745,8 @@ def _build_laps_info(groups, freq, resets=None, first_timed=False):
     e.g. legacy callers). A (0.0, "Start/Finish") beacon is always prepended
     (unless a true crossing already sits at zero) so that i2 renders a
     leading "Out Lap 0:00.000" row ahead of the timed laps.
+    ``sector_beacons`` (game sector splits from _extract_sector_beacons, same
+    cum time base) is carried through sorted for the LDX Sections export.
     """
     laps = []
     for k, item in enumerate(groups):
@@ -639,6 +801,7 @@ def _build_laps_info(groups, freq, resets=None, first_timed=False):
         "fastest_lap": min(timed, key=lambda lap: lap["duration"])["lap_num"] if timed else 1,
         "fastest_time": min((lap["duration"] for lap in timed), default=0.0),
         "beacons": sorted(beacons, key=lambda item: item[0]),
+        "sector_beacons": sorted(sector_beacons or [], key=lambda item: item[0]),
     }
 
 
@@ -663,6 +826,16 @@ def _filter_acti_lap(data_log, laps_info, target_lap):
                 keep_v.append(v)
         ch.set_samples(np.asarray(keep_t), np.asarray(keep_v))
     duration = t_hi - t_lo
+    kept_sectors = []
+    for item in laps_info.get("sector_beacons", []) or []:
+        try:
+            tt = float(item[0]) if isinstance(item, (tuple, list)) else float(item)
+        except (TypeError, ValueError, IndexError):
+            continue
+        if t_lo - 1e-9 <= tt <= t_hi + 1e-9:
+            name = item[1] if isinstance(item, (tuple, list)) and len(item) > 1 else "Split"
+            kept_sectors.append((tt - t_lo, name))
+    kept_sectors.sort(key=lambda kv: kv[0])
     return {
         "laps": [
             {
@@ -679,6 +852,7 @@ def _filter_acti_lap(data_log, laps_info, target_lap):
         "fastest_lap": recs[0]["lap_num"],
         "fastest_time": duration,
         "beacons": [(0.0, "Start/Finish"), (duration, "Start/Finish")],
+        "sector_beacons": kept_sectors,
     }
 
 
@@ -896,8 +1070,13 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
 
     groups, resets = _all_lap_bounds(ld)
     data_log.metadata["venue_name"] = cfg.get("name", "")
+    rebuilt_sf = False
     if realign_sf and groups:
         groups, resets = _realign_groups_to_real_sf(data_log, groups, resets, data_log.duration())
+        # Rebuilt segments carry (dur, 0, 0, t_start, t_end): the sample
+        # indices are gone, so the cum-path extractor below yields [] and
+        # sectors are rebuilt on the file clock instead.
+        rebuilt_sf = all(item[1] == 0 and item[2] == 0 for item in groups)
     if groups:
         lap_ids = np.zeros(len(t_gps))
         for k, item in enumerate(groups):
@@ -933,7 +1112,7 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
     if isinstance(head_dt, datetime.datetime):
         data_log.datetime = head_dt
         if head_dt.tzinfo is None:
-            data_log.datetime_utc = head_dt.replace(tzinfo=datetime.timezone.utc)
+            data_log.datetime_utc = head_dt.astimezone(datetime.timezone.utc)
         else:
             data_log.datetime_utc = head_dt.astimezone(datetime.timezone.utc)
 
@@ -944,7 +1123,20 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         else:
             first_end = first_item[2] / fx
         first_timed = _opening_group_is_complete_lap(data_log, first_end, float(first_item[0]))
-        laps_info = _build_laps_info(groups, fx, resets, first_timed=first_timed)
+        # Game sector splits come from the Last Sector Time latch edges --
+        # no GPS trap needed. Untouched sim cuts use the cum time base;
+        # rebuilt (--realign-sf) segments live on the file clock, where the
+        # mod-line lap-end latch is a genuine interior split of the new lap.
+        if rebuilt_sf:
+            new_beacon_times = [0.0] + [float(t) for t in resets]
+            sector_beacons = _extract_realigned_sector_beacons(
+                ld, groups, new_beacon_times, data_log.duration(),
+            )
+        else:
+            sector_beacons = _extract_sector_beacons(ld, groups, fx, resets)
+        laps_info = _build_laps_info(
+            groups, fx, resets, first_timed=first_timed, sector_beacons=sector_beacons,
+        )
     else:
         duration = data_log.duration()
         laps_info = {
@@ -963,5 +1155,6 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
             "fastest_lap": 1,
             "fastest_time": 0.0,
             "beacons": [(0.0, "Start/Finish")] if duration > 0 else [],
+            "sector_beacons": [],
         }
     data_log.laps_info = _filter_acti_lap(data_log, laps_info, target_lap)

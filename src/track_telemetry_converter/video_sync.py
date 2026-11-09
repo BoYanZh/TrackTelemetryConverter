@@ -346,11 +346,13 @@ def _backup_name(path: Path) -> Path:
 
 
 def _atomic_save(tree: ET.ElementTree[ET.Element], path: Path) -> None:
+    from .exporters.ldx_exporter import dumps_canonical_ldx
+
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=path.name + ".tmp-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as stream:
-            tree.write(stream, encoding="utf-8", xml_declaration=True)
+            stream.write(dumps_canonical_ldx(tree.getroot()))
             stream.flush()
             os.fsync(stream.fileno())
         Path(temp_name).replace(path)

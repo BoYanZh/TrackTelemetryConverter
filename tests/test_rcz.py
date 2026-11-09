@@ -640,7 +640,11 @@ def test_rcz_target_lap_rebases_time_and_lap_metadata():
         ldx_path = os.path.join(tmp_dir, "lap2.ldx")
         atomic_write_motec_pair(motec, log, ld_path, ldx_path)
         root = ET.parse(ldx_path).getroot()
-        assert len(root.findall(".//Laps/Lap")) == 1
+        # i2-canonical shape: no <Laps> block (i2 strips it on load), lap
+        # timing lives in the Beacons, fastest lap is a Details entry.
+        assert root.findall(".//Laps") == []
+        fastest = {e.get("Id"): e.get("Value") for e in root.findall(".//Details/*")}
+        assert fastest["Fastest Lap"] == "2"
         assert [float(marker.get("Time", "0")) for marker in root.findall(".//Marker")] == [
             0.0,
             30_000_000.0,
