@@ -311,14 +311,15 @@ def test_all_lap_bounds_interpolates_reset_crossing():
     assert abs(durs[1] - 19.97) < 0.005
     assert abs(durs[2] - 19.97) < 0.005
     assert abs(durs[3] - (62.5 - 59.91)) < 0.005
-    # Beacons lead with 0.0 so i2 renders the opening "Out Lap
-    # 0:00.000" row; the real S/F crossings follow. The file-end
-    # truncation is still not beaconed.
+    # Beacons are the true S/F crossings only -- no leading 0.0, so i2
+    # derives its opening Out Lap from the data before the first beacon and
+    # Lap 1 starts at the first real crossing like every other lap. The
+    # file-end truncation is still not beaconed.
     assert list(resets) == pytest.approx([19.97, 39.94, 59.91], abs=0.005)
     info = acti_parser._build_laps_info(groups, freq, resets)
     assert abs(info["laps"][1]["duration"] - 19.97) < 0.005
     beacons = [b[0] for b in info["beacons"]]
-    assert beacons == pytest.approx([0.0, 19.97, 39.94, 59.91], abs=0.005)
+    assert beacons == pytest.approx([19.97, 39.94, 59.91], abs=0.005)
 
 
 def test_all_lap_bounds_prefers_official_last_lap_time():
@@ -359,7 +360,7 @@ def test_all_lap_bounds_prefers_official_last_lap_time():
     info = acti_parser._build_laps_info(groups, freq, resets)
     assert info["fastest_time"] == pytest.approx(19.85, abs=1e-9)
     assert [b[0] for b in info["beacons"]] == pytest.approx(
-        [0.0, 19.97, 39.87, 59.72], abs=0.005)
+        [19.97, 39.87, 59.72], abs=0.005)
 
 
 def test_all_lap_bounds_ignores_wild_official_time():
@@ -553,14 +554,12 @@ def test_parse_acti_log_realign_sf_cuts_at_real_line(tmp_path):
     out = DataLog()
     out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
     beacons = [b[0] for b in out.laps_info["beacons"]]
-    assert beacons[0] == 0.0
-    assert len(beacons) == 2
-    assert abs(beacons[1] - 20.0) < 0.1
+    assert beacons == pytest.approx([20.0], abs=0.1)
     laps = out.laps_info["laps"]
     assert len(laps) == 2
     assert laps[0]["type"] == "Out Lap"
-    assert abs(laps[0]["end_time"] - beacons[1]) < 1e-9
-    assert abs(laps[1]["start_time"] - beacons[1]) < 1e-9
+    assert abs(laps[0]["end_time"] - beacons[0]) < 1e-9
+    assert abs(laps[1]["start_time"] - beacons[0]) < 1e-9
 
 
 def test_parse_acti_log_realign_sf_off_keeps_sim_cuts(tmp_path):
@@ -569,7 +568,7 @@ def test_parse_acti_log_realign_sf_off_keeps_sim_cuts(tmp_path):
     out = DataLog()
     out.from_acti_log(src, track="test_east", anchors=anchors)
     beacons = [b[0] for b in out.laps_info["beacons"]]
-    assert beacons == pytest.approx([0.0, 10.0, 30.0], abs=0.1)
+    assert beacons == pytest.approx([10.0, 30.0], abs=0.1)
 
 
 def test_parse_acti_log_realign_sf_falls_back_without_real_line(tmp_path):
@@ -578,7 +577,7 @@ def test_parse_acti_log_realign_sf_falls_back_without_real_line(tmp_path):
     out = DataLog()
     out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
     beacons = [b[0] for b in out.laps_info["beacons"]]
-    assert beacons == pytest.approx([0.0, 10.0, 30.0], abs=0.1)
+    assert beacons == pytest.approx([10.0, 30.0], abs=0.1)
 
 
 def test_parse_acti_log_realign_sf_recovers_tail_crossing(tmp_path):
@@ -590,9 +589,7 @@ def test_parse_acti_log_realign_sf_recovers_tail_crossing(tmp_path):
     out = DataLog()
     out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
     beacons = [b[0] for b in out.laps_info["beacons"]]
-    assert beacons[0] == 0.0
-    assert len(beacons) == 2
-    assert abs(beacons[1] - 20.0) < 0.1
+    assert beacons == pytest.approx([20.0], abs=0.1)
 
 
 def test_parse_acti_log_realign_sf_recovers_head_crossing(tmp_path):
@@ -603,9 +600,7 @@ def test_parse_acti_log_realign_sf_recovers_head_crossing(tmp_path):
     out = DataLog()
     out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
     beacons = [b[0] for b in out.laps_info["beacons"]]
-    assert beacons[0] == 0.0
-    assert len(beacons) == 2
-    assert abs(beacons[1] - 9.2) < 0.1
+    assert beacons == pytest.approx([9.2], abs=0.1)
 
 
 def test_acti_local_header_mtime_applies_to_ld_and_ldx(tmp_path, monkeypatch):
@@ -754,7 +749,7 @@ def test_acti_end_to_end_sector_beacons_and_ldx_sections(tmp_path):
         for group in ET.parse(ldx_path).getroot().findall(".//MarkerGroup")
     }
     assert groups["Sections"] == ["S1", "S2", "S1", "S2"]
-    assert len(groups["Beacons"]) == 2
+    assert groups["Beacons"] == ["Finish"]
 
 
 def test_acti_ldx_merges_gps_splits_with_game_sectors(tmp_path):
@@ -836,7 +831,7 @@ def test_acti_realign_sf_keeps_game_sectors(tmp_path):
     anchors = _write_realign_synthetic_ld(src, with_sectors=True)
     out = DataLog()
     out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
-    assert [b for b, _ in out.laps_info["beacons"]] == pytest.approx([0.0, 20.0], abs=0.1)
+    assert [b for b, _ in out.laps_info["beacons"]] == pytest.approx([20.0], abs=0.1)
     sectors = out.laps_info["sector_beacons"]
     assert [name for _, name in sectors] == ["S1", "S2", "S3", "S4"] * 2
     assert [t for t, _ in sectors] == pytest.approx(
@@ -852,3 +847,87 @@ def test_acti_realign_sf_keeps_game_sectors(tmp_path):
         for group in ET.parse(ldx_path).getroot().findall(".//MarkerGroup")
     }
     assert groups["Sections"] == ["S1", "S2", "S3", "S4"] * 2
+
+
+def test_acti_lap_one_starts_at_first_crossing_not_file_start(tmp_path):
+    """No forced 0.0 beacon: Lap 1 must start at the first real S/F
+    crossing like every other lap, and the opening Out Lap must carry its
+    real duration instead of rendering 0:00.000 in i2."""
+    import xml.etree.ElementTree as ET
+
+    src = str(tmp_path / "acti.ld")
+    anchors = _write_realign_synthetic_ld(src)
+    out = DataLog()
+    out.from_acti_log(src, track="test_east", anchors=anchors, realign_sf=True)
+    beacons = [b[0] for b in out.laps_info["beacons"]]
+    assert beacons == pytest.approx([20.0], abs=0.1)
+    assert all(t > 1e-9 for t in beacons)
+    laps = out.laps_info["laps"]
+    assert laps[0]["type"] == "Out Lap"
+    assert laps[0]["start_time"] == pytest.approx(0.0)
+    assert laps[0]["end_time"] == pytest.approx(20.0, abs=0.1)
+    assert laps[1]["start_time"] == pytest.approx(20.0, abs=0.1)
+    ml = MotecLog()
+    ml.initialize()
+    ml.add_all_channels(out)
+    ldx_path = str(tmp_path / "out.ldx")
+    ml.write_ldx(ldx_path, out.laps_info, beacons=[])
+    times = [float(m.attrib.get("Time")) / 1e6
+             for m in ET.parse(ldx_path).getroot().findall(".//MarkerGroup[@Name='Beacons']/Marker")]
+    assert times == pytest.approx([20.0], abs=0.1)
+
+
+def _head_crossing_log(speed_kmh=169.2):
+    """DataLog circling back through the East S/F trap at ~1.3 s and ~132.8 s.
+
+    A constant-speed circle (period 131.5 s) through the trap, southbound:
+    the first crossing sits inside detect_beacons' head gate, the second in
+    the open. The GPS speed channel is set independently so the insertion
+    speed floor can be tested in isolation.
+    """
+    from track_telemetry_converter.channels import TRACK_BEACONS
+
+    trap = TRACK_BEACONS["Thunderhill East Bypass"]
+    freq, duration, period = 20.0, 140.0, 131.5
+    v = 47.0
+    radius = v * period / (2 * math.pi)
+    t = np.arange(int(duration * freq)) / freq
+    phi = math.pi + 2 * math.pi * (t - 1.3) / period
+    lat = trap["lat"] + (radius * np.sin(phi)) / 111000.0
+    lon = trap["lon"] + (radius * np.cos(phi) + radius) / 85670.0
+    log = DataLog()
+    log.add_channel("GPS Latitude", "deg", float, 7)
+    log.channels["GPS Latitude"].set_samples(t, lat)
+    log.add_channel("GPS Longitude", "deg", float, 7)
+    log.channels["GPS Longitude"].set_samples(t, lon)
+    log.add_channel("Ground Speed", "km/h", float, 2)
+    log.channels["Ground Speed"].set_samples(t, np.full_like(t, speed_kmh))
+    log.add_channel("GPS Heading", "deg", float, 1)
+    log.channels["GPS Heading"].set_samples(t, np.full_like(t, 180.0))
+    log.traps = [dict(trap)]
+    return log
+
+
+def test_realign_inserts_flying_head_crossing():
+    log = _head_crossing_log(speed_kmh=169.2)
+    groups = [(131.5, 0, 2630, 0.0, 131.5), (8.5, 2630, 2800, 131.5, 140.0)]
+    new_groups, new_resets = acti_parser._realign_groups_to_real_sf(
+        log, groups, [131.5], log.duration(),
+    )
+    assert [round(t, 1) for t in new_resets] == [1.3, 132.8]
+    bounds = [(g[3], g[4]) for g in new_groups]
+    assert bounds[0][0] == pytest.approx(0.0)
+    assert bounds[0][1] == pytest.approx(1.3, abs=0.3)
+    assert bounds[1][0] == pytest.approx(1.3, abs=0.3)
+    assert bounds[1][1] == pytest.approx(132.8, abs=0.3)
+
+
+def test_realign_skips_slow_head_crossing():
+    log = _head_crossing_log(speed_kmh=50.0)
+    groups = [(131.5, 0, 2630, 0.0, 131.5), (8.5, 2630, 2800, 131.5, 140.0)]
+    new_groups, new_resets = acti_parser._realign_groups_to_real_sf(
+        log, groups, [131.5], log.duration(),
+    )
+    assert [round(t, 1) for t in new_resets] == [132.8]
+    assert new_groups[0][3] == pytest.approx(0.0)
+    assert new_groups[0][4] == pytest.approx(132.8, abs=0.3)

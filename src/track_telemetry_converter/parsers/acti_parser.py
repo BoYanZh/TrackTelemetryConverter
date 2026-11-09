@@ -732,19 +732,18 @@ def _build_laps_info(groups, freq, resets=None, first_timed=False, sector_beacon
     is typed "Out Lap" unconditionally. The exception (``first_timed``) is a
     flying recording start right at the timing line -- e.g. an AC spawn --
     whose opening segment already runs line-to-line at full pace; that one
-    counts as timed, while the leading 0.0 beacon still renders the i2 Out
-    Lap 0:00.000 row ahead of it. Interior full-length groups are timed
-    (>=15 s), the trailing group is the In Lap; short fragments of the
-    trailing edge stay "Partial". The leading 0.0 beacon always renders the
-    i2 Out Lap 0:00.000 row, so a timed opening segment still sits behind an
-    out-lap row in the lap table.
+    counts as timed. Interior full-length groups are timed (>=15 s), the
+    trailing group is the In Lap; short fragments of the trailing edge stay
+    "Partial".
 
     Group tuples carry interpolated (duration, start, end, t_start, t_end).
     ``resets`` holds the interpolated start/finish crossing times, which
     become Beacons (falling back to group boundaries when resets is None,
-    e.g. legacy callers). A (0.0, "Start/Finish") beacon is always prepended
-    (unless a true crossing already sits at zero) so that i2 renders a
-    leading "Out Lap 0:00.000" row ahead of the timed laps.
+    e.g. legacy callers). Only true crossings become Beacons: log start
+    (mid-lap) and file end are not crossings, so unlike older revisions no
+    (0.0, "Start/Finish") marker is prepended -- i2 derives the opening Out
+    Lap row from the data before the first beacon itself, and Lap 1 starts
+    at the first real crossing like every other lap.
     ``sector_beacons`` (game sector splits from _extract_sector_beacons, same
     cum time base) is carried through sorted for the LDX Sections export.
     """
@@ -783,16 +782,17 @@ def _build_laps_info(groups, freq, resets=None, first_timed=False, sector_beacon
                 start_s = s / freq
                 end_s = e / freq
             for boundary in (start_s, end_s):
+                if abs(boundary) <= 1e-9:
+                    continue
                 if not any(abs(boundary - b[0]) <= 1e-6 for b in beacons):
                     beacons.append((boundary, "Start/Finish"))
     else:
-        # A leading 0.0 beacon makes i2 render the opening "Out Lap
-        # 0:00.000" row ahead of the timed laps; the real S/F crossings
-        # follow from `resets`. Skip it when a true crossing already sits
-        # at (or within rounding of) zero.
-        beacon_times = [float(t) for t in resets]
-        if not beacon_times or beacon_times[0] > 1e-9:
-            beacon_times = [0.0] + beacon_times
+        # Only true S/F crossings become Beacons: log start (mid-lap or on
+        # the line) and file end are not crossings. In particular no 0.0
+        # marker is prepended -- i2 derives the opening Out Lap from the
+        # data before the first beacon, and Lap 1 starts at the first real
+        # crossing like every other lap.
+        beacon_times = [float(t) for t in resets if abs(float(t)) > 1e-9]
         beacons = [(t, "Start/Finish") for t in beacon_times]
     timed = [lap for lap in laps if lap["type"] == "Timed"]
     return {
@@ -873,6 +873,46 @@ def _merge_profiles(anchors):
 # detect_beacons' min_lap_sec, far below any real lap duration.
 _REALIGN_MERGE_SEC = 20.0
 
+#: Head-crossing insertion speed floor (km/h). A gate-free S/F crossing in
+#: the head zone is only adopted as the first boundary when the car flies
+#: through it: pit-lane crawls and drive-throughs stay below this, so they
+#: keep the legacy merged-out-lap behaviour instead of injecting a phantom
+#: lap. Flying S/F straights run 150+ km/h; pit limiters cap at ~40-80.
+_REALIGN_HEAD_INSERT_MIN_KMH = 100.0
+
+
+def _speed_at(data_log, t):
+    """Interpolated Ground Speed (km/h) at file time ``t``; NaN when unknown."""
+    try:
+        ch = data_log.channels.get(CH_GROUND_SPEED)
+        if ch is None:
+            return float("nan")
+        vals = np.asarray(ch.values, dtype=float)
+        stamps = np.asarray(ch.timestamps, dtype=float)
+        if vals.size == 0 or stamps.size != vals.size:
+            return float("nan")
+        return float(np.interp(t, stamps, vals, left=np.nan, right=np.nan))
+    except (TypeError, ValueError, AttributeError):
+        return float("nan")
+
+
+def _first_flying_head_crossing(data_log, relaxed, first_base):
+    """Earliest gate-free S/F crossing strictly before ``first_base``.
+
+    ``relaxed`` is the gate-free detection (head/tail zones lifted); only
+    crossings the full-gate scan missed can precede ``first_base``, i.e.
+    head-zone ones -- tail-zone ones sort after it. The crossing must be a
+    flying pass (speed floor) with matching heading (already enforced inside
+    detect_beacons): recording started just before the real line. Returns the
+    crossing time or ``None``.
+    """
+    for cand in sorted(relaxed):
+        if not 0.0 < cand < first_base - _REALIGN_MERGE_SEC:
+            continue
+        if _speed_at(data_log, cand) >= _REALIGN_HEAD_INSERT_MIN_KMH:
+            return float(cand)
+    return None
+
 
 def _realign_groups_to_real_sf(data_log, groups, resets, duration):
     """Re-cut ACTI segments at the real-world Start/Finish line.
@@ -893,6 +933,12 @@ def _realign_groups_to_real_sf(data_log, groups, resets, duration):
     is still a genuine line crossing, not a phantom. Rebuilt segments keep
     the ``(duration, 0, 0, t_start, t_end)`` shape that
     :func:`_build_laps_info` accepts.
+
+    A gate-free head-zone crossing ahead of the first accepted boundary is
+    adopted when the car flies through it (see
+    ``_REALIGN_HEAD_INSERT_MIN_KMH``): the recording started just before the
+    real line, so Lap 1 starts at the corrected line and only the pre-line
+    sliver stays an Out Lap. Slow passes keep the legacy merged behaviour.
     """
     try:
         found = [t for t, name in data_log.detect_beacons() if name == "Start/Finish"]
@@ -909,23 +955,24 @@ def _realign_groups_to_real_sf(data_log, groups, resets, duration):
         # Nothing passed the full gates (short file, line inside the head /
         # tail zones): every sim reset is a replace candidate.
         keep = [float(r) for r in resets]
+    # Gate-free scan, shared by the replace pass below and the head-crossing
+    # adoption after it: same detector, head/tail zones lifted.
+    try:
+        relaxed = [
+            t
+            for t, name in data_log.detect_beacons(min_time_sec=0.0, end_gate_sec=0.0)
+            if name == "Start/Finish"
+        ]
+    except (ValueError, TypeError, AttributeError):
+        relaxed = []
+    relaxed = sorted(t for t in relaxed if 0.0 < t < duration)
     if keep:
-        # Second pass with the head/tail gates lifted: a kept reset means the
-        # car was at the mod line but GPS saw no valid crossing. When the
-        # trace actually reached the real line just inside the gated zone
-        # (recording starts/ends right at the line), adopt that crossing.
-        # Relaxed crossings only ever replace kept resets -- never add
-        # boundaries -- so pit-lane crawls near the beacon cannot inject
-        # phantom laps.
-        try:
-            relaxed = [
-                t
-                for t, name in data_log.detect_beacons(min_time_sec=0.0, end_gate_sec=0.0)
-                if name == "Start/Finish"
-            ]
-        except (ValueError, TypeError, AttributeError):
-            relaxed = []
-        relaxed = sorted(t for t in relaxed if 0.0 < t < duration)
+        # A kept reset means the car was at the mod line but GPS saw no
+        # valid crossing. When the trace actually reached the real line just
+        # inside the gated zone (recording starts/ends right at the line),
+        # adopt that crossing. Relaxed crossings only ever replace kept
+        # resets -- never add boundaries -- so pit-lane crawls near the
+        # beacon cannot inject phantom laps.
         used = set()
         patched = []
         for k in keep:
@@ -943,6 +990,15 @@ def _realign_groups_to_real_sf(data_log, groups, resets, duration):
     crossings = sorted(found + [k for k in keep if 0.0 < k < duration])
     if not crossings:
         return groups, resets
+    if found:
+        # Adopt a flying head-zone crossing as the first boundary: recording
+        # started just before the real line (e.g. an AC flying spawn 63 m
+        # up-track of the start lights), so Lap 1 would otherwise start at
+        # the mod line instead of the corrected line. The speed floor keeps
+        # pit crawls on the legacy merged-out-lap path.
+        head = _first_flying_head_crossing(data_log, relaxed, crossings[0])
+        if head is not None:
+            crossings = [head] + crossings
     bounds = [0.0] + crossings + [duration]
     segs = [(b - a, 0, 0, a, b) for a, b in zip(bounds, bounds[1:], strict=False) if b - a > 0]
     if not segs:
@@ -1128,7 +1184,9 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
         # rebuilt (--realign-sf) segments live on the file clock, where the
         # mod-line lap-end latch is a genuine interior split of the new lap.
         if rebuilt_sf:
-            new_beacon_times = [0.0] + [float(t) for t in resets]
+            # True crossings only -- no leading 0.0 (see _build_laps_info):
+            # the sector gap guard inside re-adds it for head-gating.
+            new_beacon_times = [float(t) for t in resets if abs(float(t)) > 1e-9]
             sector_beacons = _extract_realigned_sector_beacons(
                 ld, groups, new_beacon_times, data_log.duration(),
             )
@@ -1154,7 +1212,7 @@ def parse_acti_log(data_log, log_path, target_lap=None, track=None, anchors=None
             "total_laps": 1,
             "fastest_lap": 1,
             "fastest_time": 0.0,
-            "beacons": [(0.0, "Start/Finish")] if duration > 0 else [],
+            "beacons": [],
             "sector_beacons": [],
         }
     data_log.laps_info = _filter_acti_lap(data_log, laps_info, target_lap)
