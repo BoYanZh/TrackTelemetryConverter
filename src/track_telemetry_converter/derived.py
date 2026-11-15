@@ -257,6 +257,24 @@ def calculate_rate(data_log, channel_name, unit):
         data_log.channels[new_name].set_samples(times.copy(), rate)
 
 
+def hold_last_valid(values, valid):
+    """Forward-fill invalid samples with the last valid value; head back-fills.
+
+    Vectorized form of the per-sample "hold last" loops: positions holding
+    ``False`` in ``valid`` take the most recent valid value, and a leading
+    invalid run takes the first valid value. With no valid sample the input
+    is returned unchanged.
+    """
+    values = np.asarray(values, dtype=float)
+    valid = np.asarray(valid, dtype=bool)
+    if values.size == 0 or not np.any(valid):
+        return np.array(values, dtype=float, copy=True)
+    idx = np.where(valid, np.arange(values.size), -1)
+    np.maximum.accumulate(idx, out=idx)
+    idx[idx < 0] = int(np.argmax(valid))
+    return values[idx]
+
+
 def course_heading_from_gps(lat, lon):
     """Course heading (deg, 0=N) from GPS positions.
 
@@ -277,16 +295,7 @@ def course_heading_from_gps(lat, lon):
     moving = np.isfinite(step) & (step > 0.01)
     if not np.any(moving):
         return np.zeros_like(raw)
-    heading = np.copy(raw)
-    last = 0.0
-    for i in range(len(heading)):
-        if moving[i] and np.isfinite(heading[i]):
-            last = heading[i]
-        else:
-            heading[i] = last
-    first = int(np.argmax(moving))
-    heading[:first] = heading[first]
-    return np.round(heading, 3)
+    return np.round(hold_last_valid(raw, moving & np.isfinite(raw)), 3)
 
 
 def ensure_gps_heading(data_log):

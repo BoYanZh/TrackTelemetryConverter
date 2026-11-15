@@ -164,8 +164,10 @@ def test_programmatic_and_cli_exports_match_ld_channels_and_ldx_markers(tmp_path
 
 
 def test_output_paths_omit_requested_auxiliary_formats_when_no_file_is_written(tmp_path):
-    source = Path(EXAMPLES) / "csv_sample.csv"
-    output = tmp_path / "without-gps.ld"
+    # IBT sim logs carry no GPS: .gpx/.kml have nothing to write, so only
+    # the .ld/.ldx pair lands despite gpx=True, kml=True.
+    source = Path(EXAMPLES) / "ibt_sample.ibt"
+    output = tmp_path / "sim-no-gps.ld"
 
     result = _convert_without_output(_request(source, output, gpx=True, kml=True))
 
@@ -173,6 +175,57 @@ def test_output_paths_omit_requested_auxiliary_formats_when_no_file_is_written(t
     assert set(result.output_paths) == {str(output), str(output.with_suffix(".ldx"))}
     assert not output.with_suffix(".gpx").exists()
     assert not output.with_suffix(".kml").exists()
+
+
+def _throttle_only_log():
+    from track_telemetry_converter.log import DataLog
+
+    log = DataLog()
+    log.add_channel("Throttle Pos", "%", float, 2)
+    log.channels["Throttle Pos"].set_samples(
+        [0.0, 0.1, 0.2], [0.0, 50.0, 100.0],
+    )
+    return log
+
+
+def test_backfill_accelerator_pos_from_throttle():
+    from track_telemetry_converter.conversion import _maybe_backfill_accelerator_pos
+
+    log = _throttle_only_log()
+    assert _maybe_backfill_accelerator_pos(log) is True
+    assert "Accelerator Pos" in log.channels
+    np.testing.assert_allclose(
+        log.channels["Accelerator Pos"].values, [0.0, 50.0, 100.0],
+    )
+    assert log.channels["Accelerator Pos"].units == "%"
+    record = log.metadata["channel_provenance"]["Accelerator Pos"]
+    assert record["power_semantics"] == "throttle_fallback"
+    # Throttle's own record is untouched.
+    assert "Accelerator Pos" not in str(
+        log.metadata["channel_provenance"].get("Throttle Pos", {}),
+    )
+
+
+def test_backfill_accelerator_pos_never_overwrites_recorded_pedal():
+    from track_telemetry_converter.conversion import _maybe_backfill_accelerator_pos
+    from track_telemetry_converter.log import DataLog
+
+    log = _throttle_only_log()
+    log.add_channel("Accelerator Pos", "%", float, 1)
+    log.channels["Accelerator Pos"].set_samples([0.0, 0.1, 0.2], [42.0, 42.0, 42.0])
+    assert _maybe_backfill_accelerator_pos(log) is False
+    np.testing.assert_allclose(
+        log.channels["Accelerator Pos"].values, [42.0, 42.0, 42.0],
+    )
+
+
+def test_backfill_accelerator_pos_no_throttle_noop():
+    from track_telemetry_converter.conversion import _maybe_backfill_accelerator_pos
+    from track_telemetry_converter.log import DataLog
+
+    log = DataLog()
+    assert _maybe_backfill_accelerator_pos(log) is False
+    assert "Accelerator Pos" not in log.channels
 
 
 def test_conversion_request_and_result_are_picklable():

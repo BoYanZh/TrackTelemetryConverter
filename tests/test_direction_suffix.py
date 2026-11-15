@@ -151,18 +151,46 @@ def test_cli_direction_suffix_explicit_output_wins(tmp_path):
     assert "WARNING" in result.stdout and "--output" in result.stdout
 
 
-def test_cli_direction_suffix_no_gps_keeps_plain_names(tmp_path):
+def test_cli_no_gps_skips_output(tmp_path):
+    """GPS-less logs no longer produce an .ld: no position, no valid output."""
     src = str(tmp_path / "nogps.csv")
     with open(src, "w", encoding="utf-8") as handle:
         handle.write("Time,Throttle Pos\n")
         for i in range(50):
             handle.write(f"{i * 0.1:.1f},{float(i):.1f}\n")
     result = _run_cli_in_process([src, "CSV", "--direction-suffix"])
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert os.path.isfile(str(tmp_path / "nogps.ld"))
-    assert not os.path.exists(str(tmp_path / "nogps_cw.ld"))
-    assert not os.path.exists(str(tmp_path / "nogps_ccw.ld"))
-    assert "not applicable" in result.stdout
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert not os.path.exists(str(tmp_path / "nogps.ld"))
+    assert not os.path.exists(str(tmp_path / "nogps.ldx"))
+    assert "No usable GPS position" in result.stdout
+
+
+def test_cli_manifest_csv_skips_output(tmp_path):
+    """A download-manifest CSV (no numeric telemetry) yields no .ld."""
+    src = str(tmp_path / "manifest_drive_pending.csv")
+    with open(src, "w", encoding="utf-8") as handle:
+        handle.write("file_id,url,sender,date,source_channel,message_id\n")
+        handle.write("abc123,https://example.com/x,tor,2024-01-01T00:00:00+00:00,ch,1\n")
+        handle.write("def456,https://example.com/y,tor,2024-01-02T00:00:00+00:00,ch,2\n")
+    result = _run_cli_in_process([src, "CSV"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert not os.path.exists(str(tmp_path / "manifest_drive_pending.ld"))
+    assert not os.path.exists(str(tmp_path / "manifest_drive_pending.ldx"))
+    assert "skipping .ld output" in result.stdout
+
+
+def test_cli_map_trace_csv_skips_output(tmp_path):
+    """Video map traces (numeric but no GPS) yield no .ld."""
+    src = str(tmp_path / "clip_record.csv")
+    with open(src, "w", encoding="utf-8") as handle:
+        handle.write("video_t,map_x,map_y,speed_mph\n")
+        for i in range(50):
+            handle.write(f"{i * 0.5:.1f},{1669.7 + i:.1f},{977.3 + i:.1f},{92.0 + i * 0.1:.1f}\n")
+    result = _run_cli_in_process([src, "CSV"])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert not os.path.exists(str(tmp_path / "clip_record.ld"))
+    assert not os.path.exists(str(tmp_path / "clip_record.ldx"))
+    assert "No usable GPS position" in result.stdout
 
 
 def test_batch_direction_suffix(tmp_path):
@@ -290,16 +318,17 @@ def test_venue_default_off(tmp_path):
     assert _ldx_detail(ldx, "Venue") == "Test Loop"
 
 
-def test_venue_no_gps_unchanged(tmp_path):
+def test_venue_no_gps_skips_output(tmp_path):
+    """Without GPS there is no venue to write: no .ldx at all."""
     src = str(tmp_path / "vnogps.csv")
     with open(src, "w", encoding="utf-8") as handle:
         handle.write("Time,Throttle Pos\n")
         for i in range(50):
             handle.write(f"{i * 0.1:.1f},{float(i):.1f}\n")
     result = _run_cli_in_process([src, "CSV", "--direction-suffix"])
-    assert result.returncode == 0, result.stdout + result.stderr
-    venue = _ldx_detail(str(tmp_path / "vnogps.ldx"), "Venue")
-    assert " CW" not in venue and " CCW" not in venue
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert not os.path.exists(str(tmp_path / "vnogps.ldx"))
+    assert "No usable GPS position" in result.stdout
 
 
 def test_batch_venue_suffix(tmp_path):
@@ -334,17 +363,17 @@ def test_direction_suffix_skipped_for_single_direction_track(tmp_path):
     assert _ldx_detail(str(tmp_path / "a_gps.ldx"), "Venue") == "Test Loop"
 
 
-def test_venue_is_bidirectional_matches_only_buttonwillow():
+def test_venue_is_bidirectional_matches_nothing_shipped():
     from track_telemetry_converter.conversion import _venue_is_bidirectional
 
-    # Thunderhill West keeps plain names even with --direction-suffix so
-    # mixed directories list one <stem>.ld/.ldx per input.
+    # All shipped tracks keep plain names even with --direction-suffix;
+    # only custom ACTI anchors opt in (via acti_bidirectional, not here).
     assert not _venue_is_bidirectional("Thunderhill West")
     assert not _venue_is_bidirectional("Thunderhill 5 Mile West Bypass")
     assert not _venue_is_bidirectional("thunderhill_west")
     assert not _venue_is_bidirectional("THill WST")
-    assert _venue_is_bidirectional("Buttonwillow 1A CCW")
-    assert _venue_is_bidirectional("buttonwillow_raceway_park")
+    assert not _venue_is_bidirectional("Buttonwillow 1A CCW")
+    assert not _venue_is_bidirectional("buttonwillow_raceway_park")
     assert not _venue_is_bidirectional("Sonoma Raceway")
     assert not _venue_is_bidirectional("Thunderhill East Bypass")
     assert not _venue_is_bidirectional("Laguna Seca")

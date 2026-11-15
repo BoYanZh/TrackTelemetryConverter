@@ -297,3 +297,28 @@ def test_gr86_can_pps_is_pedal_with_documented_basis():
         if expected == "Accelerator Pos":
             assert "Toyota_GR86_ZN8" in record["semantics_reference"]
             assert "Throttle Pos" not in log.channels
+
+
+def test_truncated_throttle_position_maps_to_throttle_pos():
+    """AiM truncates Throttle_Position to 16 chars (Throttle_Positio).
+
+    The truncated name plus the underscore variant must both resolve to
+    the canonical Throttle Pos channel instead of being dropped.
+    """
+    from dataclasses import dataclass
+    @dataclass
+    class Meta:
+        units: str = "%"
+        source_type: int = 9
+        @classmethod
+        def from_channel_table(cls, table):
+            return cls()
+    for raw in ("Throttle_Positio", "Throttle_Position"):
+        channels = {raw: _FakeXrkTable({"timecodes": _FakeXrkCol([1000., 1020.]),
+                                        raw: _FakeXrkCol([0., 100.])})}
+        log = DataLog()
+        xrk_parser._parse_xrk_channels(log, channels, {}, 1000., Meta)
+        assert "Throttle Pos" in log.channels, raw
+        np.testing.assert_allclose(log.channels["Throttle Pos"].values, [0., 100.])
+        assert log.channels["Throttle Pos"].units == "%"
+        assert log.metadata["channel_provenance"]["Throttle Pos"]["raw_name"] == raw

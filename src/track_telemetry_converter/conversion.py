@@ -73,26 +73,23 @@ def _dlap_output_path(ld_filename, source_path):
 def _venue_is_bidirectional(venue_name):
     """Whether a free-text venue is a track run in both directions.
 
-    Only Buttonwillow layouts take ``_cw``/``_ccw``. Everything else
-    (Sonoma, Laguna Seca, Thunderhill West, Thunderhill East, CA-9, ...)
-    keeps plain names, so a directory of mixed tracks lists one
+    No shipped track takes ``_cw``/``_ccw``: every venue (Thunderhill
+    West, Buttonwillow, Sonoma, Laguna Seca, Thunderhill East, CA-9,
+    ...) keeps plain names, so a directory of mixed tracks lists one
     ``<stem>.ld`` / ``<stem>.ldx`` per input with no direction twins.
+    Custom ACTI anchors can still opt in via ``bidirectional: true``;
+    that path is decided by ``acti_bidirectional``, not here.
     """
-    venue = (venue_name or "").lower().replace("_", " ")
-    return "buttonwillow" in venue
+    return False
 
 
 def _direction_suffix_applies(active_type, data_log, explicit_venue=""):
     """Whether --direction-suffix may rename this conversion.
 
-    Only tracks run in both directions take ``_cw``/``_ccw``: ACTI tracks
-    when their resolved profile is marked bidirectional (shipped:
-    buttonwillow_1a_ccw; custom anchors can set it); other inputs when
-    the venue -- parsed from the file, or explicitly asserted with
-    --venue_name -- names Buttonwillow. Thunderhill West keeps plain
-    names even with the flag so mixed directories stay uniform.
-    Single-direction tracks such as sonoma keep plain names even with
-    the flag.
+    Only custom ACTI anchors with ``bidirectional: true`` take
+    ``_cw``/``_ccw``. All shipped tracks (Thunderhill West, Buttonwillow,
+    Sonoma, Laguna Seca, ...) keep plain names even with the flag so
+    mixed directories stay uniform.
     """
     metadata = getattr(data_log, "metadata", None) or {}
     if active_type == "ACTI":
@@ -213,6 +210,95 @@ def _maybe_apply_direction_suffix(args, data_log, ld_filename, ldx_filename,
     emit(f"Detected track direction: {direction} "
           f"(heading winding {total:+.0f} deg); output -> {new_ld}")
     return new_ld, new_ldx, new_targets
+
+
+#: Minimum GPS fixes per axis for a log to count as position telemetry:
+#: two fixes are the smallest real trace (a segment); anything less is
+#: noise or a non-telemetry file (download manifests, video map traces).
+#: Sim/replay inputs (IBT/ACTI/MOTEC_LD) carry no GPS by nature and are
+#: exempt from this check (the samples check still applies to them).
+_MIN_GPS_FIXES = 2
+
+
+def _finite_sample_count(values):
+    """Count finite numeric samples, tolerating None/mixed content."""
+    import numpy as np
+
+    if values is None:
+        return 0
+    try:
+        arr = np.asarray(list(values), dtype=np.float64)
+    except (TypeError, ValueError):
+        return 0
+    return int(np.isfinite(arr).sum())
+
+
+def _telemetry_validity(data_log, active_type):
+    """Return None when the parsed log can yield a valid MoTeC .ld.
+
+    Otherwise return the skip message: no channels/samples at all (e.g.
+    a download-manifest CSV), or no usable GPS position (e.g. video map
+    traces, GPS-less auxiliary files). Sim/replay inputs (IBT, ACTI,
+    MOTEC_LD) carry no GPS by nature, so only the samples check applies
+    to them -- ACTI synthesizes GPS downstream from its own frame.
+    """
+    from .channels import CH_GPS_LATITUDE, CH_GPS_LONGITUDE
+
+    channels = getattr(data_log, "channels", {}) or {}
+    if not channels:
+        return "No channels parsed from log; skipping .ld output"
+    total = sum(
+        _finite_sample_count(getattr(ch, "values", None)) for ch in channels.values()
+    )
+    if total == 0:
+        return "No usable samples in any channel; skipping .ld output"
+    if active_type not in ("IBT", "ACTI", "MOTEC_LD"):
+        lat = channels.get(CH_GPS_LATITUDE)
+        lon = channels.get(CH_GPS_LONGITUDE)
+        lat_n = _finite_sample_count(getattr(lat, "values", None)) if lat is not None else 0
+        lon_n = _finite_sample_count(getattr(lon, "values", None)) if lon is not None else 0
+        if min(lat_n, lon_n) < _MIN_GPS_FIXES:
+            return (
+                f"No usable GPS position ({lat_n}/{lon_n} finite samples, "
+                f"need {_MIN_GPS_FIXES}); skipping .ld output"
+            )
+    return None
+
+
+def _maybe_backfill_accelerator_pos(data_log, emit=lambda _message: None):
+    """Fill Accelerator Pos from Throttle Pos when no pedal channel exists.
+
+    Many loggers record only throttle demand (e.g. AiM GR86
+    ``Throttle_Position``); templates and math expecting a pedal channel
+    would otherwise see nothing. A genuinely recorded Accelerator Pos
+    always wins and is never overwritten. The fill is recorded in channel
+    provenance (``power_semantics: "throttle_fallback"``) so it is never
+    mistaken for a real pedal sensor.
+    """
+    from .channels import CH_ACCELERATOR_POS, CH_THROTTLE_POS
+    from .provenance import record_channel_provenance
+
+    channels = getattr(data_log, "channels", {}) or {}
+    if CH_ACCELERATOR_POS in channels or CH_THROTTLE_POS not in channels:
+        return False
+    src = channels[CH_THROTTLE_POS]
+    data_log.add_channel(CH_ACCELERATOR_POS, src.units, float, src.decimals)
+    data_log.channels[CH_ACCELERATOR_POS].set_samples(src.timestamps, src.values)
+    throttle_prov = (getattr(data_log, "metadata", {}) or {}).get("channel_provenance", {}).get(
+        CH_THROTTLE_POS, {},
+    )
+    record_channel_provenance(
+        data_log,
+        CH_ACCELERATOR_POS,
+        throttle_prov.get("raw_name", CH_THROTTLE_POS),
+        power_semantics="throttle_fallback",
+        semantics_basis=(
+            "No pedal channel recorded; Throttle Pos duplicated "
+            "for pedal-channel template compatibility"
+        ),
+    )
+    emit(f"Backfilled Accelerator Pos from Throttle Pos ({len(src.timestamps)} samples)")
+    return True
 
 
 def _detect_gps_venue(data_log):
@@ -626,8 +712,16 @@ def _convert_one(
 
         data_log, parse_messages = load_log_data(args, active_type, stint_arg, target_session)
         messages.extend(parse_messages)
-        if not data_log.channels:
-            raise ValueError("Failed to find any channels in log data")
+        skip_reason = _telemetry_validity(data_log, active_type)
+        if skip_reason is not None:
+            emit(skip_reason)
+            return ConversionResult(
+                status="skipped",
+                messages=tuple(messages),
+                error={"code": "NO_VALID_TELEMETRY", "stage": "parse", "message": skip_reason},
+            )
+
+        _maybe_backfill_accelerator_pos(data_log, emit=emit)
 
         emit(f"Parsed {data_log.duration():.1f}s log with {len(data_log.channels)} channels:")
         for channel in data_log.channels.values():
@@ -654,7 +748,7 @@ def _convert_one(
                 metadata = getattr(data_log, "metadata", None) or {}
                 track = metadata.get("acti_track") or metadata.get("venue_name") or active_type
                 emit(f"direction suffix not applicable to '{track}'; keeping plain names "
-                     "(only bidirectional tracks such as buttonwillow_1a_ccw take _cw/_ccw)")
+                     "(only custom anchors with bidirectional:true take _cw/_ccw)")
             else:
                 direction, total = _detect_track_direction(data_log)
                 if direction is None:

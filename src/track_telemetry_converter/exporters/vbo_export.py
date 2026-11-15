@@ -51,6 +51,7 @@ from ..channels import (
     CHANNEL_ALIASES,
     DISCRETE_CHANNELS,
 )
+from ..derived import hold_last_valid
 
 # (header name, column name, format function) for the core GPS columns.
 _CORE_COLUMNS = ("sats", "time", "lat", "long", "velocity", "heading", "height")
@@ -98,16 +99,7 @@ def _fill_gaps(values):
     filled = np.array(values, dtype=np.float64, copy=True)
     if np.all(~np.isfinite(filled)):
         return filled
-    last = np.nan
-    for i in range(len(filled)):
-        if np.isfinite(filled[i]):
-            last = filled[i]
-        elif np.isfinite(last):
-            filled[i] = last
-    if not np.isfinite(filled[0]):
-        first_valid = filled[np.isfinite(filled)][0]
-        filled[~np.isfinite(filled)] = first_valid
-    return filled
+    return hold_last_valid(filled, np.isfinite(filled))
 
 
 def _sample_on_grid(channel, grid):

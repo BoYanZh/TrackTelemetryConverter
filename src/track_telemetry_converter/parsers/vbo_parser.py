@@ -17,7 +17,7 @@ from ..channels import (
     CH_GROUND_SPEED,
     CHANNEL_ALIASES,
 )
-from ..lap_view import ChannelView, readonly
+from ..lap_view import ChannelView, is_start_finish_beacon, readonly
 from ..provenance import record_channel_provenance
 
 #: Rows per chunk in the vectorized data pass (bounds the transient
@@ -395,12 +395,6 @@ def _load_vbo_session_venue(data_log, sections):
             return
 
 
-def _is_vbo_sf_name(name):
-    """Whether a beacon name marks the start/finish line (mirrors ldx_exporter)."""
-    lower = str(name or "").strip().lower()
-    return lower in ("start/finish", "sf", "beacon") or lower.startswith(("start", "finish", "lap"))
-
-
 def _vbo_speed_at(data_log, t):
     """Interpolated Ground Speed (km/h) at file time ``t``; NaN when unknown."""
     try:
@@ -427,7 +421,7 @@ def _build_vbo_laps_info(data_log, min_lap_sec=_VBO_MIN_LAP_SEC):
     """
     try:
         beacons = [
-            (t, n) for t, n in data_log.detect_beacons() if _is_vbo_sf_name(n)
+            (t, n) for t, n in data_log.detect_beacons() if is_start_finish_beacon(n)
         ]
     except (ValueError, TypeError, AttributeError):
         beacons = []
@@ -437,7 +431,7 @@ def _build_vbo_laps_info(data_log, min_lap_sec=_VBO_MIN_LAP_SEC):
         except (ValueError, TypeError, AttributeError):
             relaxed = []
         for t, n in sorted(relaxed):
-            if not _is_vbo_sf_name(n):
+            if not is_start_finish_beacon(n):
                 continue
             if _vbo_speed_at(data_log, t) < _VBO_RESCUE_MIN_KMH:
                 continue

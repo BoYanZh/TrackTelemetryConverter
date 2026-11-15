@@ -35,7 +35,10 @@ def parse_csv_log(data_log, log_lines):
 
     This will create a channel for each column in the CSV file, with the name of that channel
     taken from the CSV header. All channels will be created without any units. Any non numeric data
-    will be ignored, and that channel will be removed. The first column of data must be time
+    will be ignored, and that channel will be removed. Columns with no usable samples
+    (e.g. every row skipped on non-numeric time, as in a download-manifest
+    listing) are removed as well, so downstream sees "no telemetry"
+    instead of writing an empty .ld. The first column of data must be time
 
     log_lines: List, containing CSV log lines
     """
@@ -138,4 +141,10 @@ def parse_csv_log(data_log, log_lines):
             )
             if decimals[pos] > data_log.channels[name].decimals:
                 data_log.channels[name].decimals = decimals[pos]
-        # No samples: the empty channel stays, exactly like the legacy loop.
+            continue
+        # No samples: every row skipped (non-numeric time) or the column
+        # never decoded. Drop the empty channel instead of keeping it,
+        # so a non-telemetry CSV parses to zero channels and the
+        # conversion gate skips .ld output.
+        if name in data_log.channels:
+            del data_log.channels[name]

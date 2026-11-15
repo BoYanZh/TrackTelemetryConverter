@@ -33,17 +33,17 @@ from ..channels import (
     CH_THROTTLE_POS,
     CH_YAW_RATE,
 )
+from ..derived import hold_last_valid
 
 EARTH_RADIUS_M = 6371000.0
 
 #: Shipped track profiles. ``scale`` is near unity (within 0.5%, enforced by
 #: ``test_shipped_profiles_have_scale_near_unity``) for every shipped track;
 #: calibration refuses to save anything that deviates more than 5%.
-#: ``bidirectional`` marks tracks that are actually run in both directions
-#: (buttonwillow): only those ever take the opt-in
-#: --direction-suffix ``_cw``/``_ccw`` names. Single-direction tracks such as
-#: sonoma and thunderhill_west would only gain noise, so the suffix is
-#: skipped for them even when the flag is passed. Custom anchors may set
+#: ``bidirectional`` marks custom anchors that are run in both directions;
+#: only those ever take the opt-in --direction-suffix ``_cw``/``_ccw``
+#: names. All shipped tracks (including thunderhill_west and buttonwillow)
+#: keep plain names even when the flag is passed. Custom anchors may set
 #: ``bidirectional`` the same way.
 ACTI_TRACK_PROFILES = {
     "thunderhill_east_bypass": {
@@ -103,7 +103,6 @@ ACTI_TRACK_PROFILES = {
         "dx_m": -372.26,
         "dy_m": 415.941,
         "rmse_error_m": 4.1,
-        "bidirectional": True,
     },
 }
 
@@ -178,18 +177,7 @@ def compute_gps_heading(x_real_m, y_real_m):
     if not np.any(moving):
         return np.zeros_like(raw_heading)
 
-    hdg = np.copy(raw_heading)
-    last_hdg = 0.0
-    for i in range(len(hdg)):
-        if moving[i]:
-            last_hdg = hdg[i]
-        else:
-            hdg[i] = last_hdg
-
-    first_mov = int(np.argmax(moving))
-    if moving[first_mov]:
-        hdg[:first_mov] = hdg[first_mov]
-    return np.round(hdg, 3)
+    return np.round(hold_last_valid(raw_heading, moving), 3)
 
 
 def heading_direction(headings, min_total_deg=180.0):

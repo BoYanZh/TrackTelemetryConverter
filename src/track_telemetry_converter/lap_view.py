@@ -17,6 +17,17 @@ def readonly(array):
     return view
 
 
+def is_start_finish_beacon(name):
+    """Whether a beacon name marks the start/finish line.
+
+    Names that read as a lap line (start/finish/sf/beacon/lap*) are lap
+    beacons; anything else (T1, Split 1, S1, ...) is a sector split. Shared
+    by LDX export classification and VBO lap cutting so the rule cannot drift.
+    """
+    lower = str(name or "").strip().lower()
+    return lower in ("start/finish", "sf", "beacon") or lower.startswith(("start", "finish", "lap"))
+
+
 @dataclass(frozen=True)
 class ChannelView:
     """Native samples with units, rate and source metadata, including IBT arrays."""

@@ -351,7 +351,11 @@ VBO raw keys disambiguate duplicate column names with suffixes such as
 selecting a suffixed key selects that column. The column inventory is available
 in `metadata["vbo_raw_columns"]` when raw access is requested. This preserves
 unknown columns and alias losers without changing which canonical source wins.
-VBO still does not infer lap boundaries from arbitrary columns.
+VBO cuts `laps_info` from `[laptiming]` start/finish trap crossings (leading
+Out Lap, middle Timed, trailing In Lap/Partial, with a flying-speed rescue
+pass for truncated excerpts); it still does not infer lap boundaries from
+arbitrary data columns. The file's own track name from `[session data]` is
+recorded as the venue when present.
 
 ## Project layout
 

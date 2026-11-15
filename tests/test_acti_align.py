@@ -411,9 +411,9 @@ def test_all_lap_bounds_falls_back_on_non_timer_values():
 
 
 def test_shipped_bidirectional_markers():
-    """Only tracks run in both directions take _cw/_ccw (buttonwillow)."""
+    """No shipped profile takes _cw/_ccw; only custom anchors opt in."""
     assert not acti_parser.ACTI_TRACK_PROFILES["thunderhill_west"].get("bidirectional", False)
-    assert acti_parser.ACTI_TRACK_PROFILES["buttonwillow_1a_ccw"].get("bidirectional") is True
+    assert not acti_parser.ACTI_TRACK_PROFILES["buttonwillow_1a_ccw"].get("bidirectional", False)
     assert not acti_parser.ACTI_TRACK_PROFILES["sonoma"].get("bidirectional", False)
 
 

@@ -24,6 +24,7 @@ from ..channels import (
     CH_COOLANT_TEMP,
     CH_ENGINE_OIL_PRESS,
     CH_ENGINE_OIL_TEMP,
+    CH_THROTTLE_POS,
     CH_YAW_RATE,
     CHANNEL_ALIASES,
 )
@@ -43,6 +44,10 @@ XRK_ALIASES = {
     "oiltemp": (CH_ENGINE_OIL_TEMP, "C", 2),
     "ect": (CH_COOLANT_TEMP, "C", 2),
     "oilpressure0": (CH_ENGINE_OIL_PRESS, "kPa", 2),
+    # AiM truncates long names (e.g. Throttle_Position -> Throttle_Positio);
+    # underscore variants never match the spaced CHANNEL_ALIASES keys.
+    "throttle_positio": (CH_THROTTLE_POS, "%", 2),
+    "throttle_position": (CH_THROTTLE_POS, "%", 2),
 }
 XRK_PRIORITY = {"imu_longg": 20, "imu_lateral_g": 20, "imu_yaw": 20}
 

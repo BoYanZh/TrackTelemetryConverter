@@ -203,13 +203,11 @@ def build_parser():
                         dest="direction_suffix",
                         help="Opt-in: append _cw/_ccw track-direction suffix to output names "
                              "and ' CW'/' CCW' to the venue (from GPS-heading winding; "
-                             "ACTI only for bidirectional profiles such as buttonwillow_1a_ccw; "
+                             "ACTI only for custom anchors with \"bidirectional\": true; "
                              "default filenames only, explicit --output/--venue_name "
-                             "keep their values). For ACTI input the suffix only applies "
-                             "to bidirectional track profiles (buttonwillow_1a_ccw, "
-                             "or custom anchors with "
-                             '"bidirectional": true); single-direction tracks such as '
-                             "sonoma and thunderhill_west keep plain names")
+                             "keep their values). For shipped tracks (thunderhill, "
+                             "buttonwillow, sonoma, laguna, ...) the suffix never "
+                             "applies: they keep plain names")
 
     parser.add_argument("--lap", type=str, default="all",
                         help="Reconstructed lap number within the selected stint, or 'all' (default: all)")

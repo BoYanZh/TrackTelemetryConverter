@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import re
 
+from ..lap_view import is_start_finish_beacon
 from .xml_utils import indent_xml
 
 LDX_XML_DECLARATION = '<?xml version="1.0"?>'
@@ -39,7 +40,7 @@ def _classify_beacon_markers(beacons):
         b_name = item[1] if isinstance(item, (tuple, list)) and len(item) > 1 else "Beacon"
         b_name_clean = _clean_ascii(b_name)
         b_name_lower = b_name_clean.strip().lower()
-        if b_name_lower in ("start/finish", "sf", "beacon") or b_name_lower.startswith("start") or b_name_lower.startswith("finish") or b_name_lower.startswith("lap"):
+        if is_start_finish_beacon(b_name_lower):
             detected_lap_beacons.append((b_time, b_name_clean))
         else:
             split_beacons.append((b_time, b_name_clean))
