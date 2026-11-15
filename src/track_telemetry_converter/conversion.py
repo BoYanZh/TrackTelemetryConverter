@@ -73,15 +73,13 @@ def _dlap_output_path(ld_filename, source_path):
 def _venue_is_bidirectional(venue_name):
     """Whether a free-text venue is a track run in both directions.
 
-    Mirrors the ACTI ``bidirectional`` profile flag for non-ACTI inputs,
-    whose venues are free text rather than profile keys: only Thunderhill
-    West and Buttonwillow layouts take ``_cw``/``_ccw``. Everything else
-    (Sonoma, Laguna Seca, Thunderhill East, CA-9, ...) keeps plain names.
+    Only Buttonwillow layouts take ``_cw``/``_ccw``. Everything else
+    (Sonoma, Laguna Seca, Thunderhill West, Thunderhill East, CA-9, ...)
+    keeps plain names, so a directory of mixed tracks lists one
+    ``<stem>.ld`` / ``<stem>.ldx`` per input with no direction twins.
     """
     venue = (venue_name or "").lower().replace("_", " ")
-    if "buttonwillow" in venue:
-        return True
-    return "thunderhill" in venue and "west" in venue
+    return "buttonwillow" in venue
 
 
 def _direction_suffix_applies(active_type, data_log, explicit_venue=""):
@@ -89,10 +87,10 @@ def _direction_suffix_applies(active_type, data_log, explicit_venue=""):
 
     Only tracks run in both directions take ``_cw``/``_ccw``: ACTI tracks
     when their resolved profile is marked bidirectional (shipped:
-    thunderhill_west, buttonwillow_1a_ccw; custom anchors can set it;
-    thunderhill_auto follows the resolved layout); other inputs when the
-    venue -- parsed from the file, or explicitly asserted with
-    --venue_name -- names Thunderhill West or Buttonwillow.
+    buttonwillow_1a_ccw; custom anchors can set it); other inputs when
+    the venue -- parsed from the file, or explicitly asserted with
+    --venue_name -- names Buttonwillow. Thunderhill West keeps plain
+    names even with the flag so mixed directories stay uniform.
     Single-direction tracks such as sonoma keep plain names even with
     the flag.
     """
@@ -656,7 +654,7 @@ def _convert_one(
                 metadata = getattr(data_log, "metadata", None) or {}
                 track = metadata.get("acti_track") or metadata.get("venue_name") or active_type
                 emit(f"direction suffix not applicable to '{track}'; keeping plain names "
-                     "(only bidirectional tracks such as thunderhill_west take _cw/_ccw)")
+                     "(only bidirectional tracks such as buttonwillow_1a_ccw take _cw/_ccw)")
             else:
                 direction, total = _detect_track_direction(data_log)
                 if direction is None:

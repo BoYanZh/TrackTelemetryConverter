@@ -1,6 +1,21 @@
 """Venue-name normalization for MoTeC log metadata."""
 from __future__ import annotations
 
+import re
+
+_WST_TOKEN = re.compile(r"\bwst\b")
+
+
+def _mentions_west(s_lower):
+    """True when free text means Thunderhill West.
+
+    AiM loggers often store the user-typed abbreviation ``WST`` (e.g. venue
+    ``THill WST``) instead of the full word ``west``. Match the full word
+    plus a standalone ``wst`` token; the word boundary avoids false hits
+    inside unrelated words.
+    """
+    return "west" in s_lower or bool(_WST_TOKEN.search(s_lower))
+
 
 def normalize_venue(name):
     if not name:
@@ -12,14 +27,14 @@ def normalize_venue(name):
         if any(k in s_lower for k in ["5 mile", "5 miles", "5mi"]):
             if "double bypass" in s_lower or "db" in s_lower:
                 return "Thunderhill 5 Mile Double Bypass"
-            elif "west" in s_lower and "bypass" in s_lower:
+            elif _mentions_west(s_lower) and "bypass" in s_lower:
                 return "Thunderhill 5 Mile West Bypass"
             elif "bypass" in s_lower:
                 return "Thunderhill 5 Mile Bypass"
             else:
                 return "Thunderhill 5 Mile Full"
 
-        if "west" in s_lower:
+        if _mentions_west(s_lower):
             if "bypass" in s_lower:
                 return "Thunderhill West Bypass"
             # NOTE: check "ccw" before "cw" since "ccw" contains "cw".

@@ -14,6 +14,7 @@ from ..channels import (
     CH_ACCELERATOR_POS,
     CH_GPS_LATITUDE,
     CH_GPS_LONGITUDE,
+    CH_GROUND_SPEED,
     CHANNEL_ALIASES,
 )
 from ..lap_view import ChannelView, readonly
@@ -364,7 +365,115 @@ def parse_vbo_log(data_log, log_lines, target_lap=None, *, raw_channels=None):
         data_log, cols_raw, raw_keys, selected_raw_indices, header_lines,
         selected_raw_buffers, source_time_parts, elapsed_parts,
     )
+    _load_vbo_session_venue(data_log, sections)
     _load_vbo_laptiming_traps(data_log, sections)
+    _build_vbo_laps_info(data_log)
+
+
+#: Bounds for laps cut from VBO S/F crossings (mirrors the real-log
+#: convention in motec_ld_parser._build_laps_from_beacons).
+_VBO_MIN_LAP_SEC = 15.0
+_VBO_MAX_LAP_SEC = 600.0
+#: Rescue speed floor (km/h) for gate-free S/F crossings in the head/tail
+#: zones. A truncated excerpt that starts/ends just off the line still cuts
+#: clean laps when the car flies through; pit crawls and truncated
+#: drive-throughs stay below this, so no phantom laps are injected.
+_VBO_RESCUE_MIN_KMH = 100.0
+
+
+def _load_vbo_session_venue(data_log, sections):
+    """Record the file's own track name as the venue when present.
+
+    RaceChrono writes it in ``[session data]`` (``name Sonoma``); later
+    stages normalize it exactly like filename-derived names, so Details
+    output is unchanged while GPS beacon detection gains the venue traps.
+    """
+    for raw_line in sections.get("session data", []):
+        line = str(raw_line).strip()
+        if line.lower().startswith("name ") and line[5:].strip():
+            data_log.metadata["venue_name"] = line[5:].strip()
+            return
+
+
+def _is_vbo_sf_name(name):
+    """Whether a beacon name marks the start/finish line (mirrors ldx_exporter)."""
+    lower = str(name or "").strip().lower()
+    return lower in ("start/finish", "sf", "beacon") or lower.startswith(("start", "finish", "lap"))
+
+
+def _vbo_speed_at(data_log, t):
+    """Interpolated Ground Speed (km/h) at file time ``t``; NaN when unknown."""
+    try:
+        ch = data_log.channels.get(CH_GROUND_SPEED)
+        if ch is None:
+            return float("nan")
+        vals = np.asarray(ch.values, dtype=float)
+        stamps = np.asarray(ch.timestamps, dtype=float)
+        if vals.size == 0 or stamps.size != vals.size:
+            return float("nan")
+        return float(np.interp(t, stamps, vals, left=np.nan, right=np.nan))
+    except (TypeError, ValueError, AttributeError):
+        return float("nan")
+
+
+def _build_vbo_laps_info(data_log, min_lap_sec=_VBO_MIN_LAP_SEC):
+    """laps_info from S/F trap crossings; leading/trailing partials stay untimed.
+
+    Mirrors the real-log convention (first segment Out Lap, last In Lap /
+    Partial, middle Timed / Partial). When the default gates miss both ends
+    of a truncated excerpt (recording starts/ends just off the line), a rescue
+    pass re-detects with head/tail gates lifted but requires a flying pass,
+    so single-lap excerpts still cut without injecting phantom laps.
+    """
+    try:
+        beacons = [
+            (t, n) for t, n in data_log.detect_beacons() if _is_vbo_sf_name(n)
+        ]
+    except (ValueError, TypeError, AttributeError):
+        beacons = []
+    if not beacons:
+        try:
+            relaxed = data_log.detect_beacons(min_time_sec=0.0, end_gate_sec=0.0)
+        except (ValueError, TypeError, AttributeError):
+            relaxed = []
+        for t, n in sorted(relaxed):
+            if not _is_vbo_sf_name(n):
+                continue
+            if _vbo_speed_at(data_log, t) < _VBO_RESCUE_MIN_KMH:
+                continue
+            if not any(abs(t - b[0]) <= 1e-6 for b in beacons):
+                beacons.append((t, n))
+        beacons.sort(key=lambda kv: kv[0])
+    duration = data_log.duration()
+    bounds = [0.0] + [t for t, _ in beacons] + [duration]
+    laps = []
+    for k in range(len(bounds) - 1):
+        start_s, end_s = bounds[k], bounds[k + 1]
+        dur = end_s - start_s
+        if k == 0:
+            kind = "Out Lap"
+        elif k == len(bounds) - 2:
+            kind = "In Lap" if min_lap_sec < dur <= _VBO_MAX_LAP_SEC else "Partial"
+        else:
+            kind = "Timed" if min_lap_sec <= dur <= _VBO_MAX_LAP_SEC else "Partial"
+        laps.append({
+            "lap_num": k + 1,
+            "lap_label": str(k + 1),
+            "start_time": start_s,
+            "end_time": end_s,
+            "duration": dur,
+            "type": kind,
+            "stint": 0,
+        })
+    timed = [lap for lap in laps if lap["type"] == "Timed"]
+    data_log.laps_info = {
+        "laps": laps,
+        "total_laps": len(laps),
+        "fastest_lap": min(timed, key=lambda lap: lap["duration"])["lap_num"] if timed else 1,
+        "fastest_time": min((lap["duration"] for lap in timed), default=0.0),
+        "beacons": sorted(beacons, key=lambda item: item[0]),
+        "sector_beacons": [],
+    }
 
 
 #: Sanity bounds for [laptiming] gate coordinates (decimal degrees).
@@ -399,9 +508,9 @@ def _resolve_gate_pair(first_raw, second_raw, anchor):
         best, best_dist = None, None
         for opt in options:
             dist = abs(opt[2] - anchor[0]) + abs(opt[3] - anchor[1])
-            if best is None or dist < best_dist:
+            if best is None or best_dist is None or dist < best_dist:
                 best, best_dist = opt, dist
-        if best_dist is not None and best_dist <= _VBO_GATE_MAX_ANCHOR_DEG:
+        if best is not None and best_dist is not None and best_dist <= _VBO_GATE_MAX_ANCHOR_DEG:
             return best[2], best[3]
         return None
     if len(options) == 1:

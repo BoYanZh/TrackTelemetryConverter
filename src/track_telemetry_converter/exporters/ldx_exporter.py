@@ -229,6 +229,7 @@ def write_ldx(motec_log, filename, laps_info=None, beacons=None):
     except (TypeError, ValueError):
         fastest_time_sec = 0.0
     fastest_from_beacons = False
+    fastest_time_str = "0:00.000"
     if len(lap_beacons) >= 2:
         try:
             us = [float(f"{t * 1e6:.17e}") for t, _ in lap_beacons]

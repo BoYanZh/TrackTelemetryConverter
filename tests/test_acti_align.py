@@ -411,8 +411,8 @@ def test_all_lap_bounds_falls_back_on_non_timer_values():
 
 
 def test_shipped_bidirectional_markers():
-    """Only tracks run in both directions take _cw/_ccw (thill west, buttonwillow)."""
-    assert acti_parser.ACTI_TRACK_PROFILES["thunderhill_west"].get("bidirectional") is True
+    """Only tracks run in both directions take _cw/_ccw (buttonwillow)."""
+    assert not acti_parser.ACTI_TRACK_PROFILES["thunderhill_west"].get("bidirectional", False)
     assert acti_parser.ACTI_TRACK_PROFILES["buttonwillow_1a_ccw"].get("bidirectional") is True
     assert not acti_parser.ACTI_TRACK_PROFILES["sonoma"].get("bidirectional", False)
 
@@ -673,7 +673,7 @@ def _fake_sector_ld(channs):
             self.freq = freq
 
     class _Ld:
-        pass
+        channs: list
 
     ld = _Ld()
     ld.channs = [_Ch(name, data) for name, data in channs]
@@ -764,7 +764,7 @@ def test_acti_ldx_merges_gps_splits_with_game_sectors(tmp_path):
     ldx_path = str(tmp_path / "out.ldx")
     ml.write_ldx(ldx_path, out.laps_info, beacons=[(10.0, "T1")])
     groups = {
-        group.attrib.get("Name"): [float(m.attrib.get("Time")) / 1e6 for m in group.findall("Marker")]
+        group.attrib.get("Name"): [float(m.attrib["Time"]) / 1e6 for m in group.findall("Marker")]
         for group in ET.parse(ldx_path).getroot().findall(".//MarkerGroup")
     }
     assert groups["Sections"] == pytest.approx([6.65, 10.0, 13.3, 26.65, 33.3], abs=0.06)
@@ -872,7 +872,7 @@ def test_acti_lap_one_starts_at_first_crossing_not_file_start(tmp_path):
     ml.add_all_channels(out)
     ldx_path = str(tmp_path / "out.ldx")
     ml.write_ldx(ldx_path, out.laps_info, beacons=[])
-    times = [float(m.attrib.get("Time")) / 1e6
+    times = [float(m.attrib["Time"]) / 1e6
              for m in ET.parse(ldx_path).getroot().findall(".//MarkerGroup[@Name='Beacons']/Marker")]
     assert times == pytest.approx([20.0], abs=0.1)
 

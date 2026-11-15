@@ -197,6 +197,11 @@ CHANNEL_ALIASES = {
     "coolant_temp-obd":         (CH_COOLANT_TEMP, "C", 2),
     "manifold_pressure-obd":    (CH_MANIFOLD_PRESS, "kPa", 2),
 
+    # RaceChrono VBO `-obd` columns (same signals, RaceChrono column names).
+    "throttle_pos-obd":        (CH_THROTTLE_POS, "%", 2),
+    "accelerator_pos-obd":     (CH_ACCELERATOR_POS, "%", 2),
+    "gear-obd":                (CH_GEAR, "", 0),
+
     # RaceChrono raw OBD_ IDs (Toyota GR86 / FT86 CAN Bus)
     # NOTE: the even PIDs are tire pressures (kPa, verified on the
     # 2026-09-13 Buttonwillow session: ~193-262 kPa). The odd PIDs are NOT

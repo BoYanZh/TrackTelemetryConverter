@@ -40,10 +40,11 @@ EARTH_RADIUS_M = 6371000.0
 #: ``test_shipped_profiles_have_scale_near_unity``) for every shipped track;
 #: calibration refuses to save anything that deviates more than 5%.
 #: ``bidirectional`` marks tracks that are actually run in both directions
-#: (thunderhill_west, buttonwillow): only those ever take the opt-in
+#: (buttonwillow): only those ever take the opt-in
 #: --direction-suffix ``_cw``/``_ccw`` names. Single-direction tracks such as
-#: sonoma would only gain noise, so the suffix is skipped for them even when
-#: the flag is passed. Custom anchors may set ``bidirectional`` the same way.
+#: sonoma and thunderhill_west would only gain noise, so the suffix is
+#: skipped for them even when the flag is passed. Custom anchors may set
+#: ``bidirectional`` the same way.
 ACTI_TRACK_PROFILES = {
     "thunderhill_east_bypass": {
         "name": "Thunderhill Raceway Park (East Bypass)",
@@ -72,7 +73,6 @@ ACTI_TRACK_PROFILES = {
         "dx_m": 641.107,
         "dy_m": 481.77,
         "rmse_error_m": 4.41,
-        "bidirectional": True,
     },
     "laguna_seca": {
         "name": "Laguna Seca",

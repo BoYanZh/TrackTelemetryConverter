@@ -39,6 +39,9 @@ def test_thunderhill_config_variants():
     assert normalize_venue("Thunderhill West CW") == "Thunderhill West CW"
     assert normalize_venue("Thunderhill West Bypass") == "Thunderhill West Bypass"
     assert normalize_venue("Thunderhill West") == "Thunderhill West"
+    # AiM abbreviation: Solo2 DL user-typed "WST" for West.
+    assert normalize_venue("THill WST") == "Thunderhill West"
+    assert normalize_venue("thill_wst_bypass") == "Thunderhill West Bypass"
 
 
 def test_other_tracks():

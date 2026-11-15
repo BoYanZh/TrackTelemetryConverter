@@ -334,12 +334,15 @@ def test_direction_suffix_skipped_for_single_direction_track(tmp_path):
     assert _ldx_detail(str(tmp_path / "a_gps.ldx"), "Venue") == "Test Loop"
 
 
-def test_venue_is_bidirectional_matches_west_and_buttonwillow():
+def test_venue_is_bidirectional_matches_only_buttonwillow():
     from track_telemetry_converter.conversion import _venue_is_bidirectional
 
-    assert _venue_is_bidirectional("Thunderhill West")
-    assert _venue_is_bidirectional("Thunderhill 5 Mile West Bypass")
-    assert _venue_is_bidirectional("thunderhill_west")
+    # Thunderhill West keeps plain names even with --direction-suffix so
+    # mixed directories list one <stem>.ld/.ldx per input.
+    assert not _venue_is_bidirectional("Thunderhill West")
+    assert not _venue_is_bidirectional("Thunderhill 5 Mile West Bypass")
+    assert not _venue_is_bidirectional("thunderhill_west")
+    assert not _venue_is_bidirectional("THill WST")
     assert _venue_is_bidirectional("Buttonwillow 1A CCW")
     assert _venue_is_bidirectional("buttonwillow_raceway_park")
     assert not _venue_is_bidirectional("Sonoma Raceway")
