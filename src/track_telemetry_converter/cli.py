@@ -203,7 +203,7 @@ def build_parser():
                         dest="direction_suffix",
                         help="Opt-in: append _cw/_ccw track-direction suffix to output names "
                              "and ' CW'/' CCW' to the venue (from GPS-heading winding; "
-                             "ACTI only for custom anchors with \"bidirectional\": true; "
+                             'ACTI only for custom anchors with "bidirectional": true; '
                              "default filenames only, explicit --output/--venue_name "
                              "keep their values). For shipped tracks (thunderhill, "
                              "buttonwillow, sonoma, laguna, ...) the suffix never "

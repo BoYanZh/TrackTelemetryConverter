@@ -208,7 +208,6 @@ def test_backfill_accelerator_pos_from_throttle():
 
 def test_backfill_accelerator_pos_never_overwrites_recorded_pedal():
     from track_telemetry_converter.conversion import _maybe_backfill_accelerator_pos
-    from track_telemetry_converter.log import DataLog
 
     log = _throttle_only_log()
     log.add_channel("Accelerator Pos", "%", float, 1)
